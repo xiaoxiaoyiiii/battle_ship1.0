@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useUiStore } from './ui'
 import { useChainAnimationStore } from './chainAnimation'
+import { chainCommanderSkillId } from '../components/commander/commanderSkillVisuals'
 import type { CardLike, LastAttackLike, PendingPickLike, Point, PublicChainPreview } from '../screens/game/view'
 
 /**
@@ -35,6 +36,7 @@ export interface Notice {
 
 export interface ChainWindowState {
   card: CardLike | null
+  triggerSkillId?: string
   caster: string
   targetPreview: PublicChainPreview | null
   speed3Cards: CardLike[]
@@ -229,8 +231,10 @@ export const useMatchStore = defineStore('match', () => {
       ? payload.speed3_cards.map(asCard).filter((card): card is CardLike => card !== null)
       : []
     chainWindowCollapsed.value = false
+    const card = asCard(payload.card)
     chainWindow.value = {
-      card: asCard(payload.card),
+      card,
+      triggerSkillId: chainCommanderSkillId(payload, card?.name ?? ''),
       caster: String(payload.caster ?? ''),
       targetPreview: parseTargetPreview(payload.target_preview),
       speed3Cards: speed3,

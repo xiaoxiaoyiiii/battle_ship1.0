@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any, Literal
 
 from . import mutations
+from .commanders.catalog import commander_chain_identity, get_commander
 from .commanders.rules import commander_spectate_state
 from .room import Room, card_payload, is_ship_alive, seat_order
 from .room.sync import _effect_badges
@@ -152,14 +153,86 @@ def build_view_frame(room: Room, *, audience: Literal['replay', 'spectator']) ->
     })
 
 
+def commander_skill_feedback(payload: Any, room: Room | None) -> dict[str, Any] | None:
+    """只按已发生的技能阶段复制数据，观战沿用棋盘公开范围。"""
+    if not isinstance(payload, dict):
+        return None
+    commander = get_commander(payload.get('commander_id'))
+    stage = payload.get('stage')
+    if commander is None or payload.get('skill_id') != commander.skill.id:
+        return None
+    skill = commander.skill
+    if skill.enters_chain:
+        stages = ('chain_enter', 'resolve', 'negated')
+    elif skill.id == 'delayed_lock':
+        stages = ('resolve', 'reveal')
+    else:
+        stages = ('resolve',)
+    if stage not in stages:
+        return None
+
+    out = {'stage': stage, 'commander_id': commander.id, 'skill_id': skill.id, 'skill_name': skill.name}
+    if stage == 'resolve' and isinstance(payload.get('success'), bool):
+        out['success'] = payload['success']
+    draw_count = payload.get('draw_count')
+    if skill.id == 'sacrifice_gambit' and stage == 'resolve' and out.get('success') is True:
+        if type(draw_count) is int and 0 <= draw_count <= 2:
+            out['draw_count'] = draw_count
+    if stage == 'negated' and isinstance(payload.get('negated_by'), str):
+        out['negated_by'] = payload['negated_by']
+
+    cells = _points(payload.get('cells')) if isinstance(payload.get('cells'), list) else []
+    if room is None or not cells:
+        return out
+    caster = payload.get('player_id')
+    opponent_id = room.opponent_of(caster)
+    if skill.id == 'sacrifice_gambit' and stage == 'chain_enter':
+        opponent = room.players.get(opponent_id)
+        marks = mutations.visible_attacks(opponent.attacks) if opponent else []
+        public_hits = {(mark.x, mark.y) for mark in marks if mark.hit}
+        if public_cells := [cell for cell in cells if (cell['x'], cell['y']) in public_hits]:
+            out['cells'] = public_cells
+    if stage == 'reveal' and opponent_id and payload.get('target_player_id') == opponent_id:
+        # 观战快照的已揭晓列表也从这里取。只复制本次已写入公开状态的同一笔坐标。
+        revealed = room.game_effects.get('delayed_lock_revealed') or []
+        if any(row.get('caster_id') == caster and row.get('target_player_id') == opponent_id
+               and row.get('revealed_round') == int(room.round or 1) - 1
+               and _points(row.get('cells')) == cells for row in revealed):
+            out['target_player_id'] = opponent_id
+            out['cells'] = cells
+    return out
+
+
+def _commander_cue(cue: dict[str, Any], room: Room) -> dict[str, Any] | None:
+    payload = cue.get('commander_skill')
+    feedback = commander_skill_feedback(payload, room)
+    if feedback is None or (side := side_of(room, payload.get('player_id'))) is None:
+        return None
+    target = None
+    if 'cells' in feedback:
+        target_id = feedback.pop('target_player_id', payload.get('player_id'))
+        target = side_of(room, target_id)
+    return {
+        'skill_stage': feedback.pop('stage'),
+        **feedback,
+        'stage': 'commander_skill',
+        'seat': side,
+        'item_kind': 'commander_skill',
+        **({'target': target} if target else {}),
+    }
+
+
 def public_cue(cue: dict[str, Any], room: Room) -> dict[str, Any] | None:
     """演出单独构造公开字段；私有落点和玩家 ACK 令牌不复制。"""
     if not isinstance(cue, dict):
         return None
+    if cue.get('stage') == 'commander_skill':
+        return _commander_cue(cue, room)
     out = {key: deepcopy(cue[key]) for key in ('stage', 'order', 'first', 'negated_skip', 'negated_by', 'success', 'duration_ms') if key in cue}
     chain = cue.get('chain')
     if isinstance(chain, list):
         out['chain'] = [{'card': row.get('card'), 'seat': row.get('seat') if row.get('seat') in ('p1', 'p2') else side_of(room, row.get('player_id')), 'negated': bool(row.get('negated')),
+                         **commander_chain_identity(row.get('item_kind'), row.get('commander_id'), row.get('skill_id')),
                          **({'mastery_tier':row['mastery_tier']} if type(row.get('mastery_tier')) is int and 1<=row['mastery_tier']<=4 else {}),
                          **({'skin_id': sid} if (sid := public_skin_id(row.get('skin_id'), row.get('card'))) else {})} for row in chain if isinstance(row, dict)]
     effect = cue.get('effect')

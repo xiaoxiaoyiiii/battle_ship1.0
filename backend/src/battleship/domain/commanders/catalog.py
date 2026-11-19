@@ -554,6 +554,17 @@ def get_commander(commander_id: str | None) -> CommanderSpec | None:
     return COMMANDER_BY_ID.get(commander_id.strip())
 
 
+def commander_chain_identity(
+    item_kind: str | None, commander_id: str | None, skill_id: str | None,
+) -> dict[str, str]:
+    if item_kind != "commander_skill":
+        return {}
+    commander = get_commander(commander_id)
+    if commander is None or not commander.skill.enters_chain or skill_id != commander.skill.id:
+        return {}
+    return {"item_kind": "commander_skill", "commander_id": commander.id, "skill_id": commander.skill.id}
+
+
 def profile_cosmetics_entries() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """供 `profile_spec.py` 注入称号、头像框、资料卡背景池子的单源清单。"""
     titles: list[dict[str, Any]] = []

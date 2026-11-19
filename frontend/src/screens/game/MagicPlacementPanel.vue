@@ -3,9 +3,13 @@ import { cardArtUrl } from '../../cards/cardArt'
 import { ownSkinId } from '../../cards/ownCardArt'
 import CardFaceArt from '../../cards/CardFaceArt.vue'
 import type { Point } from './view'
+import BoardTargetWindow from './BoardTargetWindow.vue'
+import type { BoardTargetPositions } from './boardTargetPosition'
 
 defineProps<{
   request: Record<string, unknown>
+  arena: HTMLElement | null
+  positions: BoardTargetPositions
   kind: string
   title: string
   hint: string
@@ -19,11 +23,11 @@ const emit = defineEmits<{ (event: 'confirm'): void; (event: 'cancel'): void }>(
 </script>
 
 <template>
-  <section class="game-target game-placement battle-prompt" :class="{ 'is-compact': compact, 'is-tight': tight }" data-testid="game-placement" aria-labelledby="magic-placement-title" role="region">
-    <header class="battle-prompt__head">
+  <BoardTargetWindow side="self" :arena="arena" :positions="positions" class="game-target game-placement battle-prompt" :class="{ 'is-compact': compact, 'is-tight': tight }" data-testid="game-placement" aria-labelledby="magic-placement-title" role="region">
+    <template #head>
       <div><p class="battle-prompt__context">部署战舰</p><h2 id="magic-placement-title">{{ title }} · 选择部署位置</h2></div>
       <CardFaceArt v-if="cardArtUrl(title)" class="battle-prompt__card-art" :name="title" :skin-id="ownSkinId(title)" context="hand" alt="" draggable="false" />
-    </header>
+    </template>
     <div class="game-target__main">
       <p class="game-target__hint">{{ hint }}</p>
       <p class="game-target__selected battle-prompt__progress" data-testid="magic-placement-progress" role="status">已放置 {{ request.placed ?? 0 }} / {{ request.total ?? request.remaining }}，剩余 {{ request.remaining }} 艘</p>
@@ -34,11 +38,11 @@ const emit = defineEmits<{ (event: 'confirm'): void; (event: 'cancel'): void }>(
       <button type="button" class="button button--primary" data-testid="magic-placement-confirm" :disabled="busy || !selected" @click="emit('confirm')">{{ busy ? '正在提交…' : '确认部署' }}</button>
       <button type="button" class="button button--ghost" data-testid="magic-placement-cancel" :disabled="busy" @click="emit('cancel')">{{ kind === 'last_stand' ? '交给系统放置' : '放弃剩余放置' }}</button>
     </footer>
-  </section>
+  </BoardTargetWindow>
 </template>
 
 <style scoped>
-.game-placement.game-target { left:auto; right:16px; top:104px; width:292px; max-height:calc(100dvh - 120px); padding:16px; gap:12px; border:1px solid var(--prompt-line); }
+.game-placement.game-target { --board-target-width:292px; padding:16px; gap:12px; border:1px solid var(--prompt-line); }
 .game-placement .battle-prompt__head h2 { font-size:18px; }
 .game-placement .battle-prompt__card-art { width:40px; height:60px; flex-basis:40px; }
 .game-placement .game-target__main { display:flex; flex-direction:column; gap:10px; }

@@ -9,6 +9,7 @@ import {
   type CommanderSkillCastEvent,
 } from '../../stores/commanders'
 import CommanderVfxLayer, { type CommanderVfxStage } from './CommanderVfxLayer.vue'
+import CommanderSkillIcon from './CommanderSkillIcon.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -52,6 +53,7 @@ watch(
       activeCutin.value = null
     }, durationMs)
   },
+  { flush: 'sync' },
 )
 
 onBeforeUnmount(() => {
@@ -106,9 +108,15 @@ const palette = computed(() =>
       :negated-by="activeCutin.negated_by"
       :tier="commanderTierOf(activeCutin.commander_level || 1)"
     />
+    <span class="cmd-corner-cutin__badge" aria-hidden="true">
+      <CommanderSkillIcon :skill-id="activeCutin.skill_id" />
+      <b>{{ activeCutin.skill_name }}</b>
+      <small v-if="activeCutin.draw_count">摸牌 +{{ activeCutin.draw_count }}</small>
+      <small v-else-if="activeCutin.success === false && effectiveStage !== 'negated'">未生效</small>
+    </span>
     <span class="sr-only">
       {{ activeCutin.commander_name }} 【{{ activeCutin.skill_name }}】
-      {{ effectiveStage === 'negated' ? `被 ${activeCutin.negated_by || '对手'} 无效化` : effectiveStage === 'chain_enter' ? '入链响应' : effectiveStage === 'reveal' ? '揭晓坐标' : '发动成功' }}
+      {{ effectiveStage === 'negated' ? `被 ${activeCutin.negated_by || '对手'} 无效化` : effectiveStage === 'chain_enter' ? '入链响应' : effectiveStage === 'reveal' ? '揭晓坐标' : activeCutin.success === false ? '未生效' : '发动成功' }}
     </span>
   </div>
 </template>
@@ -121,6 +129,29 @@ const palette = computed(() =>
   overflow: hidden;
   border-radius: inherit;
   pointer-events: none;
+  container-type: inline-size;
+}
+.cmd-corner-cutin__badge {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: calc(100% - 10px);
+  padding: 4px 7px;
+  border: 1px solid var(--cmd-pri);
+  border-radius: 6px;
+  color: var(--cmd-acc);
+  background: #101a2ce8;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.cmd-corner-cutin__badge .commander-skill-icon { width: 21px; height: 21px; }
+.cmd-corner-cutin__badge small { color: #fff2cf; }
+@container (max-width: 90px) {
+  .cmd-corner-cutin__badge { inset: 2px; justify-content: center; padding: 0; }
+  .cmd-corner-cutin__badge :is(b, small) { display: none; }
 }
 .sr-only {
   position: absolute;

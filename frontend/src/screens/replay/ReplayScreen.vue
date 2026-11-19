@@ -4,12 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { useReplayStore } from '../../stores/replay'
 import BattleStage from '../viewing/BattleStage.vue'
 import ViewingRules from '../viewing/ViewingRules.vue'
+import ViewingChainPanel from '../viewing/ViewingChainPanel.vue'
 import ViewingAnimationLayer from '../viewing/ViewingAnimationLayer.vue'
 import ReplayTimeline from './ReplayTimeline.vue'
 import { useAudioStore } from '../../stores/audio'
 import { useViewingPlayback } from '../viewing/useViewingPlayback'
 import { phaseText } from './model'
-import type { Json } from '../viewing/types'
 import '../viewing/viewing.css'
 
 const route = useRoute(), router = useRouter(), store = useReplayStore()
@@ -23,9 +23,9 @@ const playback = useViewingPlayback(snapshot => {
   internal = false
 })
 const frame = computed(() => playback.snapshot.value.frame ?? store.viewFrame)
+const { snapshot: visual } = playback
 const current = computed(() => store.recording?.steps[store.k])
 const matchId = computed(() => String(route.query.match_id ?? ''))
-const chain = computed(() => frame.value?.context.state !== 'game_over' && Array.isArray(frame.value?.chain.chain) ? frame.value!.chain.chain as Json[] : [])
 watch(matchId, id => void store.load(id), { immediate: true })
 watch(() => store.recording, recording => { if (recording) playback.player.load(recording); else playback.player.dispose(); playback.sync() }, { immediate: true })
 watch(() => store.k, k => { if (!internal) { playback.player.seek(k); playback.sync() } }, { flush: 'sync' })
@@ -52,7 +52,7 @@ function exit(): void { void router.push('/lobby') }
       <p v-if="store.recording.truncated" class="viewing__notice" data-testid="replay-truncated">{{ store.recording.truncated }}</p>
       <div class="viewing__layout">
         <main class="viewing__main">
-          <BattleStage :frame="frame" mode="replay" />
+          <BattleStage :frame="frame" mode="replay" :cue="visual.cue" :progress="visual.progress" />
           <div class="viewing__toolbar">
             <button type="button" class="button button--ghost" data-testid="replay-prev" :disabled="store.k <= 0" @click="store.setK(store.k - 1)">上一步</button>
             <button type="button" class="button" data-testid="replay-play" :aria-pressed="store.playing" @click="store.setPlaying(!store.playing)">{{ store.playing ? '暂停' : '播放' }}</button>
@@ -65,12 +65,12 @@ function exit(): void { void router.push('/lobby') }
           <p class="viewing__notice" data-testid="replay-step-text">第 {{ store.k + 1 }} 步 · {{ current?.text }}</p>
         </main>
         <aside class="viewing__aside">
-          <section class="viewing__panel"><h2>当前连锁</h2><div class="view-chain" data-testid="replay-chain"><span v-for="(item, i) in chain" :key="i">{{ i + 1 }} · {{ item.card }}{{ item.negated ? ' · 已无效' : '' }}</span><small v-if="!chain.length">当前没有连锁</small></div></section>
+          <ViewingChainPanel :chain="frame.context.state === 'game_over' ? null : frame.chain" :cue="visual.cue" mode="replay" />
           <details class="viewing__panel" :open="wide"><summary>关键节点</summary><div class="viewing__nodes"><button v-for="(node,i) in store.recording.nodes" :key="i" class="button button--ghost" @click="store.setK(node.step)">{{ node.label }}</button></div></details>
           <details class="viewing__panel" :open="wide"><summary>对局记录</summary><ol class="viewing__logs"><li v-for="(step, i) in store.recording.steps" :key="i" :class="{ 'is-current': i === store.k }"><button class="view-log-button" @click="store.setK(i)">{{ step.text }}</button></li></ol></details>
         </aside>
       </div>
-      <ViewingAnimationLayer :cue="playback.snapshot.value.cue" :progress="playback.snapshot.value.progress" context="replay" />
+      <ViewingAnimationLayer :cue="visual.cue" :progress="visual.progress" context="replay" />
     </template>
     <p v-else class="viewing__error">请从对局记录选择一场录像。</p>
   </section>

@@ -54,6 +54,7 @@ from ..domain.magic import hooks
 from ..domain.magic import interaction as interaction_rules
 from ..domain.magic import lifecycle as lifecycle_rules
 from ..domain.magic import registry
+from ..domain.commanders.catalog import commander_chain_identity
 from ..domain.magic.cards import (
     MAGIC_CARDS,
     MagicCard,
@@ -353,6 +354,29 @@ class MagicService:
                 to=player.socket_id,
             )
 
+    async def _emit_commander_skill(
+        self, room: Room, player_id: str, commander_id: str | None,
+        skill_id: str | None, skill_name: str, stage: str, **feedback: Any,
+    ) -> None:
+        player = room.players.get(player_id)
+        commander = get_commander(commander_id or getattr(player, "commander_id", None))
+        payload = {
+            "player_id": player_id,
+            "commander_id": commander.id if commander else DEFAULT_COMMANDER_ID,
+            "commander_name": commander.name if commander else "",
+            "commander_level": int(getattr(player, "commander_level", 1) or 1),
+            "skill_id": skill_id,
+            "skill_name": skill_name,
+            "stage": stage,
+            **feedback,
+        }
+        await self._publisher.emit("commander_skill_used", payload, room=room.id)
+        cue = {"stage": "commander_skill", "commander_skill": payload}
+        if stage == "chain_enter":
+            await self.rooms.viewing.present(room, {"stage": "join", **_spectate_chain_payload(room)}, cue)
+        else:
+            await self.rooms.viewing.present(room, cue)
+
     async def _settle_due_delayed_locks(self, room: Room) -> None:
         """在其它大回合末效应全数结算后再揭晓到期的青瞳「延迟锁定」。"""
         locks = getattr(room, "delayed_locks", None)
@@ -401,21 +425,9 @@ class MagicService:
                 "magic",
                 {"caster": caster_id, "target": target_pid, "commander_id": "qingtong", "skill_id": "delayed_lock"},
             )
-            caster_player = room.players.get(str(caster_id))
-            await self._publisher.emit(
-                "commander_skill_used",
-                {
-                    "player_id": str(caster_id),
-                    "commander_id": "qingtong",
-                    "commander_name": "青瞳",
-                    "commander_level": int(getattr(caster_player, "commander_level", 1) or 1) if caster_player else 1,
-                    "skill_id": "delayed_lock",
-                    "skill_name": "延迟锁定",
-                    "stage": "reveal",
-                    "target_player_id": target_pid,
-                    "cells": cells_payload,
-                },
-                room=room.id,
+            await self._emit_commander_skill(
+                room, str(caster_id), "qingtong", "delayed_lock", "延迟锁定", "reveal",
+                target_player_id=target_pid, cells=cells_payload,
             )
         room.delayed_locks = remaining
         if changed:
@@ -647,10 +659,11 @@ class MagicService:
         return {"status": "success", "message": "已选择一艘战舰"}
 
     async def _sacrifice_ship(self, room: Room, player_id: str,
-                              ship: PlayerShip, reason: str = "demon_contract", *, source_id: str | None = None) -> None:
+                              ship: PlayerShip, reason: str = "demon_contract", *,
+                              source_id: str | None = None) -> list[dict[str, int]]:
         player = room.players.get(player_id)
         if player is None or ship is None or ship not in player.ships:
-            return
+            return []
         interaction_rules.consume_ship_pick(room, player_id, reason)
         player.ships.remove(ship)
         clear_delayed_locks_for_ship(room, player_id, ship)
@@ -694,6 +707,7 @@ class MagicService:
             opponent_id = room.opponent_of(player_id)
             if opponent_id and room.state != RoomState.GAME_OVER:
                 await self.finish(room, opponent_id, player_id, reason=f"{reason_text}献祭最后一艘战舰")
+        return positions
 
     async def _publish_sunken_cells(self, room: Room, player_id: str,
                                     positions: list[dict[str, int]]) -> None:
@@ -1301,19 +1315,6 @@ class MagicService:
                     "magic",
                     {"caster": player_id, "commander_id": cmd.id, "skill_id": skill.id},
                 )
-                await self._publisher.emit(
-                    "commander_skill_used",
-                    {
-                        "player_id": player_id,
-                        "commander_id": cmd.id,
-                        "commander_name": cmd.name,
-                        "commander_level": int(getattr(player, "commander_level", 1) or 1),
-                        "skill_id": skill.id,
-                        "skill_name": skill.name,
-                        "stage": "resolve",
-                    },
-                    room=room.id,
-                )
             elif skill.id == "delayed_lock":
                 if not opponent_id or opponent_id not in room.players:
                     return {"status": "error", "message": "对手尚未就位"}
@@ -1339,19 +1340,9 @@ class MagicService:
                     "magic",
                     {"caster": player_id, "commander_id": cmd.id, "skill_id": skill.id},
                 )
-                await self._publisher.emit(
-                    "commander_skill_used",
-                    {
-                        "player_id": player_id,
-                        "commander_id": cmd.id,
-                        "commander_name": cmd.name,
-                        "commander_level": int(getattr(player, "commander_level", 1) or 1),
-                        "skill_id": skill.id,
-                        "skill_name": skill.name,
-                        "stage": "resolve",
-                    },
-                    room=room.id,
-                )
+            await self._emit_commander_skill(
+                room, player_id, cmd.id, skill.id, skill.name, "resolve", success=True,
+            )
             await self._emit_commander_state(room)
             await self._sync_each_seat(room)
             if self.touch_turn is not None:
@@ -1377,8 +1368,11 @@ class MagicService:
         room.commander_chain_uses.setdefault(player_id, set()).add(skill.id)
         player.commander_skill_used_count = int(getattr(player, "commander_skill_used_count", 0) or 0) + 1
         player.commander_last_used_round = int(room.round)
-        if skill.id == "sacrifice_gambit" and chosen_ship is not None:
-            await self._sacrifice_ship(room, player_id, chosen_ship, "sacrifice_gambit", source_id=player_id)
+        sacrifice_cells = []
+        if chosen_ship is not None:
+            sacrifice_cells = await self._sacrifice_ship(
+                room, player_id, chosen_ship, "sacrifice_gambit", source_id=player_id,
+            )
 
         cmd_card = MagicCard(
             name=skill.name,
@@ -1403,20 +1397,10 @@ class MagicService:
             "magic",
             {"caster": player_id, "commander_id": cmd.id, "skill_id": skill.id},
         )
-        await self._publisher.emit(
-            "commander_skill_used",
-            {
-                "player_id": player_id,
-                "commander_id": cmd.id,
-                "commander_name": cmd.name,
-                "commander_level": int(getattr(player, "commander_level", 1) or 1),
-                "skill_id": skill.id,
-                "skill_name": skill.name,
-                "stage": "chain_enter",
-            },
-            room=room.id,
+        await self._emit_commander_skill(
+            room, player_id, cmd.id, skill.id, skill.name, "chain_enter",
+            **({"cells": sacrifice_cells} if sacrifice_cells else {}),
         )
-        await self.rooms.viewing.present(room, {"stage": "join", **_spectate_chain_payload(room)})
         await self._publisher.emit(
             "magic_chain_updated", _spectate_chain_payload(room), room=room.id
         )
@@ -1468,13 +1452,12 @@ class MagicService:
                 "无畏舰队展开：本大回合己方战舰免疫普通炮击伤害且不会因此沉没（被击中隐身格将显形）",
             )
         if item.skill_id == "sacrifice_gambit":
-            drawn: list[str] = []
+            drawn = 0
             for _ in range(2):
-                card = await self.draw(room, item.player_id)
-                if card is not None:
-                    drawn.append(card.name)
-            msg = f"从公共魔法牌堆抽取了 {len(drawn)} 张魔法卡" if drawn else "牌堆已空或抽到重复卡牌，本次抽牌未能留存手牌"
-            return EffectResult(True, msg)
+                if await self.draw(room, item.player_id) is not None:
+                    drawn += 1
+            msg = f"从公共魔法牌堆抽取了 {drawn} 张魔法卡" if drawn else "牌堆已空或抽到重复卡牌，本次抽牌未能留存手牌"
+            return EffectResult(True, msg, extra={"draw_count": drawn})
         return EffectResult(False, f"未知指挥官技能: {item.skill_id}")
 
     async def commander_interact(
@@ -1575,6 +1558,7 @@ class MagicService:
                     "chain_request",
                     {
                         "card": card_payload(top.card),
+                        **commander_chain_identity(top.item_kind, top.commander_id, top.skill_id),
                         # Self-chain: the window can come back to the last
                         # caster, so the client must not assume "opponent".
                         "caster": top.player_id,
@@ -1965,8 +1949,6 @@ class MagicService:
                     )
                 suffix = f"但被{by}无效化" if by else "但被无效化"
                 if is_cmd:
-                    caster_player = room.players.get(item.player_id)
-                    cmd = get_commander(item.commander_id or getattr(caster_player, "commander_id", None))
                     await self._add_log(
                         room,
                         f"第{room.round}回合 · {self._name(room, item.player_id)} 发动的指挥官技能"
@@ -1974,20 +1956,9 @@ class MagicService:
                         "magic",
                         {"caster": item.player_id, "commander_id": item.commander_id, "skill_id": item.skill_id},
                     )
-                    await self._publisher.emit(
-                        "commander_skill_used",
-                        {
-                            "player_id": item.player_id,
-                            "commander_id": item.commander_id or (cmd.id if cmd else DEFAULT_COMMANDER_ID),
-                            "commander_name": cmd.name if cmd else "",
-                            "commander_level": int(getattr(caster_player, "commander_level", 1) or 1) if caster_player else 1,
-                            "skill_id": item.skill_id,
-                            "skill_name": item.card.name,
-                            "stage": "negated",
-                            "negated": True,
-                            "negated_by": by,
-                        },
-                        room=room.id,
+                    await self._emit_commander_skill(
+                        room, item.player_id, item.commander_id, item.skill_id, item.card.name, "negated",
+                        negated=True, negated_by=by,
                     )
                     await self._emit_commander_state(room)
                 else:
@@ -2004,8 +1975,6 @@ class MagicService:
 
             if getattr(item, "item_kind", "magic_card") == "commander_skill":
                 effect_result = await self._resolve_commander_skill(room, item)
-                caster_player = room.players.get(item.player_id)
-                cmd = get_commander(item.commander_id or getattr(caster_player, "commander_id", None))
                 chain_result = ChainResult(
                     card=item.card,
                     caster=item.player_id,
@@ -2015,29 +1984,20 @@ class MagicService:
                         "item_kind": "commander_skill",
                         "commander_id": item.commander_id,
                         "skill_id": item.skill_id,
+                        **effect_result.extra,
                     },
                 )
                 await self._add_log(
                     room,
                     f"第{room.round}回合 · {self._name(room, item.player_id)} 的指挥官技能"
-                    f"【{item.card.name}】生效"
+                    f"【{item.card.name}】{'生效' if effect_result.success else '未生效'}"
                     + (f"，{effect_result.message}" if effect_result.success and effect_result.message else ""),
                     "magic",
                     {"caster": item.player_id, "commander_id": item.commander_id, "skill_id": item.skill_id},
                 )
-                await self._publisher.emit(
-                    "commander_skill_used",
-                    {
-                        "player_id": item.player_id,
-                        "commander_id": item.commander_id or (cmd.id if cmd else DEFAULT_COMMANDER_ID),
-                        "commander_name": cmd.name if cmd else "",
-                        "commander_level": int(getattr(caster_player, "commander_level", 1) or 1) if caster_player else 1,
-                        "skill_id": item.skill_id,
-                        "skill_name": item.card.name,
-                        "stage": "resolve",
-                        "negated": False,
-                    },
-                    room=room.id,
+                await self._emit_commander_skill(
+                    room, item.player_id, item.commander_id, item.skill_id, item.card.name, "resolve",
+                    negated=False, success=effect_result.success, **effect_result.extra,
                 )
                 results.append(chain_result)
                 if effect_result.success and room.state != RoomState.GAME_OVER:

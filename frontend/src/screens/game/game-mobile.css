@@ -10,6 +10,36 @@
 .game[data-layout='compact'] .game-main-container,
 .game[data-layout='compact'] .game-content { display:contents; }
 .game[data-layout='compact'] .arena-rail { display:none; }
+.game[data-layout='compact'] .arena-rail.arena-rail--compact-chain {
+  display: block;
+  position: fixed;
+  inset: calc(var(--app-safe-top, 0px) + 64px) 6px auto auto;
+  width: max-content;
+  max-width: calc(100vw - 12px);
+  z-index: 43;
+  margin: 0;
+  pointer-events: none;
+}
+.game[data-layout='compact'] .arena-rail--compact-chain > :not(.arena-chain-slot),
+.game[data-layout='compact'] .arena-rail--compact-chain .arena-chain-slot > :not(.chain-stack) { display: none; }
+.game[data-layout='compact'] .arena-rail--compact-chain .arena-chain-slot { padding: 4px; border-radius: 6px; }
+.game[data-layout='compact'] .arena-rail--compact-chain .chain-stack {
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 100%;
+  max-height: none;
+  padding: 0;
+  margin: 0;
+  overflow-x: auto;
+  pointer-events: auto;
+}
+.game[data-layout='compact'] .arena-rail--compact-chain .chain-stack__item {
+  flex: 0 0 60px;
+  width: 60px;
+  height: 90px;
+  margin: 0;
+}
 .game[data-layout='compact'] .game-hud {
   grid-area:hud; position:static; width:100%; max-width:none; height:60px; min-height:60px;
   display:grid; grid-template-columns:1fr 1fr; grid-template-rows:32px 22px;
@@ -60,6 +90,13 @@
   grid-area:hand; display:flex; flex-direction:column; width:100%; max-width:none; height:var(--mobile-hand-height); min-height:0; position:relative; margin:0; padding:0; overflow:hidden; align-self:start;
 }
 .game[data-layout='compact'] .game-hand-head { display:flex; height:18px; min-height:18px; padding:0 6px; gap:8px; font-size:10px; }
+.game[data-layout='compact'] .commander-draw-note {
+  position: static;
+  margin-inline-start: 3px;
+  padding: 0 3px;
+  line-height: 1.2;
+  vertical-align: middle;
+}
 .game[data-layout='compact'] .game-hand-head :deep(.draw-deck) { height:18px; min-height:0; gap:5px; font-size:10px; line-height:14px; color:var(--text-secondary); }
 .game[data-layout='compact'] .game-hand-head :deep(.draw-deck b) { font-size:11px; margin-left:3px; color:var(--text-primary); }
 .game[data-layout='compact'] .game-hand-head :deep(.draw-deck__back) { width:11px; height:14px; margin:0; box-shadow:2px 1px 0 #536c7b; font-size:9px; }
@@ -88,12 +125,23 @@
 .game[data-layout='compact'] .game-actions__row .game-primary { flex:1; }
 .game[data-layout='compact'] .game-more-menu { position:absolute; left:0; right:0; bottom:64px; top:auto; max-height:60dvh; overflow:auto; z-index:100; }
 .game[data-layout='compact'] .game-chain-reopen { position:absolute; right:4px; top:24px; z-index:5; max-width:80%; }
-/* 目标面板停靠在手牌区域，海域的尺寸与位置保持不变。 */
+/* 神秘科技面板仍停靠手牌区。魔法卡和指挥官使用固定浮窗，共用紧凑尺寸。 */
 .game[data-layout='compact'].is-picking .game-hand-wrap,
 .game[data-layout='compact'].is-picking .game-compact-bar { visibility:hidden; pointer-events:none; }
-.game[data-layout='compact'].is-picking .game-target,
-.game[data-layout='compact'].is-picking .game-pick-float.battle-prompt {
+.game[data-layout='compact'].is-picking .game-mt-target {
   position:relative; grid-column:1; grid-row:6/8; align-self:stretch; left:auto!important; top:auto!important; right:auto; bottom:auto; width:100%; height:auto; max-height:none!important; padding:10px 12px; gap:6px; margin:0; overflow:auto; transform:none; z-index:40;
+}
+.game[data-layout='compact'].is-picking .board-target-window.battle-prompt {
+  --board-target-width: var(--board-target-available-width);
+  width:min(var(--board-target-width), var(--board-target-available-width));
+  max-height:min(calc(var(--mobile-hand-height) + 60px), var(--board-target-available-height));
+  padding:10px 12px;
+  gap:6px;
+}
+.game[data-layout='compact'][data-tight='true'].is-picking .board-target-window.battle-prompt {
+  --board-target-width: var(--mobile-rail-width);
+  max-height:var(--board-target-available-height);
+  padding:8px;
 }
 .game[data-layout='compact'] .battle-prompt__head { padding:0; margin:0; gap:8px; }
 .game[data-layout='compact'] .battle-prompt__context { margin:0; font-size:10px; }
@@ -165,8 +213,7 @@
 .game[data-layout='compact'][data-tight='true'] .compact-dock { flex:1; }
 .game[data-layout='compact'][data-tight='true'] .compact-dock .button { flex:1; }
 .game[data-layout='compact'][data-tight='true'] .game-actions__row .button { min-width:0; padding:4px 6px; font-size:11px; }
-.game[data-layout='compact'][data-tight='true'].is-picking .game-target,
-.game[data-layout='compact'][data-tight='true'].is-picking .game-pick-float.battle-prompt { grid-column:2; grid-row:4/6; padding:8px; }
+.game[data-layout='compact'][data-tight='true'].is-picking .game-mt-target { grid-column:2; grid-row:4/6; padding:8px; }
 .game[data-layout='compact'][data-tight='true'] .game-target__choices,.game[data-layout='compact'][data-tight='true'] .game-target__effects { flex-direction:column; }
 
 @media (max-height:520px) {

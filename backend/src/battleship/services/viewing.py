@@ -33,15 +33,18 @@ class ViewingService:
             record_state(room, step=max(0, replay.step_count(room) - 1), cause=cause)
         await self._publish(room, [])
 
-    async def present(self, room, cue: dict) -> None:
+    async def present(self, room, cue: dict, *extra_cues: dict) -> None:
         observe(room)
         self.refresh_card_skins(room)
-        record_state(room, step=max(0, replay.step_count(room) - 1), cause='presentation')
-        recorded = replay_cue(cue, room)
-        if recorded:
-            record_presentation(room, recorded, step=max(0, replay.step_count(room) - 1))
-        clean = public_cue(cue, room)
-        await self._publish(room, [clean] if clean else [])
+        step = max(0, replay.step_count(room) - 1)
+        record_state(room, step=step, cause='presentation')
+        public = []
+        for item in (cue, *extra_cues):
+            if recorded := replay_cue(item, room):
+                record_presentation(room, recorded, step=step)
+            if clean := public_cue(item, room):
+                public.append(clean)
+        await self._publish(room, public)
 
     async def attack(self, room, outcome) -> None:
         """前导、实际落点、尾声有序保存；观战先展示上一权威帧。"""

@@ -116,6 +116,8 @@ export interface CommanderSkillCastEvent {
   stage: 'resolve' | 'chain_enter' | 'negated' | 'reveal'
   negated?: boolean
   negated_by?: string | null
+  success?: boolean
+  draw_count?: number
   cells?: Array<{ x: number; y: number }>
   target_player_id?: string | null
   ts: number
@@ -555,12 +557,14 @@ export const useCommandersStore = defineStore('commanders', () => {
       stage,
       negated: Boolean(payload.negated),
       negated_by: typeof payload.negated_by === 'string' ? payload.negated_by : null,
+      success: typeof payload.success === 'boolean' ? payload.success : undefined,
+      draw_count: typeof payload.draw_count === 'number' && payload.draw_count > 0 ? payload.draw_count : undefined,
       cells: Array.isArray(payload.cells) ? (payload.cells as Array<{ x: number; y: number }>) : undefined,
       target_player_id: typeof payload.target_player_id === 'string' ? payload.target_player_id : null,
       ts: Date.now(),
     }
     lastSkillEvent.value = ev
-    if (stage === 'resolve' && ev.player_id === myPlayerId) {
+    if (stage === 'resolve' && ev.success !== false && ev.player_id === myPlayerId) {
       const cmd = commanders.value.find((c) => c.id === ev.commander_id)
       const unlockedVoices = cmd?.unlocked_options?.voices ?? []
       const pack = cmd?.equipped?.voice_pack || 'base'

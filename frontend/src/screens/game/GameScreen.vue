@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BoardPanel from './BoardPanel.vue'
+import BoardTargetWindow from './BoardTargetWindow.vue'
+import { createBoardTargetPositions, type BoardTargetSide } from './boardTargetPosition'
 import MobileCardReader from './MobileCardReader.vue'
 import AppOverlay from '../../components/AppOverlay.vue'
 import MutationList from '../../components/MutationList.vue'
@@ -24,6 +26,9 @@ import ChainAnimationOverlay from './ChainAnimationOverlay.vue'
 import CardDrawAnimation from './CardDrawAnimation.vue'
 import CardEffectOverlay from './CardEffectOverlay.vue'
 import CommanderHudBar from '../../components/commander/CommanderHudBar.vue'
+import CommanderSkillCard from '../../components/commander/CommanderSkillCard.vue'
+import CommanderSkillIcon from '../../components/commander/CommanderSkillIcon.vue'
+import { useCommanderBattleCues } from './useCommanderBattleCues'
 import { useCommandersStore } from '../../stores/commanders'
 import { useCardEffectsStore } from '../../stores/cardEffects'
 import { useCardDrawStore } from '../../stores/cardDraw'
@@ -46,7 +51,7 @@ const ownCardArt = (name:string):string | null => resolveCardArtUrl(name, ownSki
 const chainArt = (item:{ name: string; skinId?: string | null }):string | null => resolveCardArtUrl(item.name, item.skinId)
 import { useAuthStore } from '../../stores/auth'
 import { useGameStore } from '../../stores/game'
-import { useMatchStore } from '../../stores/match'
+import { useMatchStore, type ChainWindowState } from '../../stores/match'
 import { useResultStore } from '../../stores/result'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
@@ -188,7 +193,7 @@ const shieldSelectedKeys = computed<string[]>(() => {
 })
 
 interface SelectionState {
-  isChain?: boolean
+  chainWindow?: ChainWindowState
   priorityToken?: number
   card: CardLike
   index: number
@@ -202,6 +207,28 @@ interface SelectionState {
 }
 
 const selection = ref<SelectionState | null>(null)
+
+type CommanderSkillOpportunity =
+  | { kind: 'active'; phase: string | null; round: number }
+  | { kind: 'priority'; token: number }
+  | { kind: 'chain'; window: ChainWindowState }
+
+const commanderSacrifice = ref<{
+  opportunity: CommanderSkillOpportunity
+  roomId: string
+  playerId: string
+  point: Point | null
+  error: string
+} | null>(null)
+const commanderSacrificeLabel = '弃舰筹谋'
+const commanderSacrificeHint = '在自己的海域选择一艘存活战舰。确认后立即牺牲，结算成功才摸两张牌；被无效时战舰也不会退还。'
+const commanderLivingShips = computed(() => state.value.ships.filter(ship => ship.alive && ship.positions.length > 0))
+const selectedSacrificeShip = computed(() => {
+  const point = commanderSacrifice.value?.point
+  return point ? commanderLivingShips.value.find(ship => ship.positions.some(cell => cell.x === point.x && cell.y === point.y)) : undefined
+})
+const commanderSacrificeKeys = computed(() => selectedSacrificeShip.value?.positions.map(point => point.x + '-' + point.y) ?? [])
+
 const mutationDiscard = ref<{ card: CardLike; targets: Record<string, unknown>; isChain: boolean; priorityToken?: number; castIndex: number } | null>(null)
 const mutationInfoOpen = ref<'entries' | 'hand' | null>(null)
 const mutationHandSignature = computed(() => JSON.stringify(state.value.hand))
@@ -291,6 +318,7 @@ const previewKeys = computed<string[]>(() => {
 const legalKeys = computed<string[]>(() => {
   if (mtActive.value) return mtLegalKeys.value
   if (placementOpen.value) return placementLegalKeys.value
+  if (commanderSacrifice.value) return commanderLivingShips.value.flatMap(ship => ship.positions.map(point => point.x + '-' + point.y))
   const sel = selection.value
   if (!sel) {
     return match.pickRequest || shieldOpen.value
@@ -380,7 +408,7 @@ const selectionTone = computed(() => {
 
 /** 区域类目标画整片轮廓；点船/加盾类保持逐格轻量标记。 */
 const selectionKind = computed<'area' | 'line' | 'continuous' | 'ships' | null>(() => {
-  if (placementOpen.value) return 'ships'
+  if (placementOpen.value || commanderSacrifice.value) return 'ships'
   const sel = selection.value
   if (!sel) {
     if (match.pickRequest || shieldOpen.value) return 'ships'
@@ -407,6 +435,9 @@ const selectionBadge = computed(() => {
 })
 
 const chainList = computed(() => chainItems(state.value.chain))
+const {
+  active: commanderCue, board: commanderBoardCue, skillMatches, attackBuff, extraDraw,
+} = useCommanderBattleCues()
 const fieldEffectCard = computed(() => {
   const stored = state.value.effect_badges?.field
   if (stored && typeof stored === 'object') return stored as unknown as { name: string; speed?: number; type?: string; description?: string }
@@ -478,12 +509,13 @@ const remotePreviewTone = computed<'freeze' | 'fire' | 'divine' | 'radar' | 'def
 })
 const remotePreviewBadge = computed(() => remoteTargetPreview.value ? '对方选择 · ' + remoteTargetPreview.value.card : '')
 const boardPreviewKind = computed(() => mtActive.value ? mtSelectionKind.value : selectionKind.value ?? remotePreviewKind.value)
-const boardPreviewTone = computed(() => mtActive.value ? mtSelectionTone.value : placementOpen.value ? 'default' : selection.value ? selectionTone.value : remotePreviewTone.value)
-const boardPreviewBadge = computed(() => mtActive.value ? (mtSelectionKind.value === 'area' ? '神秘科技 · ' + mtTechName.value : '') : placementOpen.value ? '' : selection.value ? selectionBadge.value : remotePreviewBadge.value)
+const boardPreviewTone = computed(() => mtActive.value ? mtSelectionTone.value : placementOpen.value || commanderSacrifice.value ? 'default' : selection.value ? selectionTone.value : remotePreviewTone.value)
+const boardPreviewBadge = computed(() => mtActive.value ? (mtSelectionKind.value === 'area' ? '神秘科技 · ' + mtTechName.value : '') : placementOpen.value || commanderSacrifice.value ? '' : selection.value ? selectionBadge.value : remotePreviewBadge.value)
 /** 两块海域各自的「已选」与选择所属海域；神秘科技瞄准优先，其余沿用魔法卡逻辑。 */
 const boardSelectionSide = computed(() => mtActive.value ? mtBoard.value : selection.value ? (selection.value.board || selection.value.descriptor.board || (selection.value.descriptor.kind === 'own_ships' ? 'self' : null)) : 'self')
 const selfSelectedKeys = computed(() => {
   if (mtActive.value) return mtBoard.value === 'self' ? mtSelectedKeys.value : []
+  if (commanderSacrifice.value) return commanderSacrificeKeys.value
   return placementOpen.value ? placementSelectedKeys.value : (selection.value?.descriptor.board === 'opponent' ? [] : selectedKeys.value).concat(shieldSelectedKeys.value)
 })
 const opponentSelectedKeys = computed(() => {
@@ -492,13 +524,13 @@ const opponentSelectedKeys = computed(() => {
 })
 const selfBoardPreviewKeys = computed(() => {
   if (mtActive.value) return mtBoard.value === 'self' ? mtPreviewKeys.value : []
-  if (placementOpen.value) return []
+  if (placementOpen.value || commanderSacrifice.value) return []
   if (selection.value) return selection.value.board === 'self' ? previewKeys.value : []
   return remoteTargetPreview.value?.board === 'self' ? remotePreviewKeys.value : []
 })
 const opponentBoardPreviewKeys = computed(() => {
   if (mtActive.value) return mtBoard.value === 'opponent' ? mtPreviewKeys.value : []
-  if (placementOpen.value) return []
+  if (placementOpen.value || commanderSacrifice.value) return []
   if (selection.value) return selection.value.board === 'self' ? [] : previewKeys.value
   return remoteTargetPreview.value?.board === 'opponent' ? remotePreviewKeys.value : []
 })
@@ -506,7 +538,7 @@ const opponentBoardPreviewKeys = computed(() => {
 const chainCollapsed = computed(() => match.chainWindowCollapsed)
 // 只有待响应请求使用弹窗；结算中的卡牌始终只展示在右侧竖栏。
 const chainHasContent = computed(() => !!chainWindow.value)
-const chainPanelOpen = computed(() => chainHasContent.value && !chainCollapsed.value)
+const chainPanelOpen = computed(() => chainHasContent.value && !chainCollapsed.value && !commanderSacrifice.value)
 const speed3Hand = computed<CardLike[]>(() => chainWindow.value?.speed3Cards ?? [])
 const chainRemaining = computed(() => {
   const window = chainWindow.value
@@ -612,18 +644,19 @@ watch(
 )
 
 // 目标海域优先；使用标量依赖，普通 room_sync 不会把手动切换的海域抢回去。
-const targetBoard = computed(() => {
+const targetBoard = computed<BoardTargetSide | null>(() => {
   if (mtActive.value) return mtBoard.value
-  if (placementOpen.value) return 'self'
+  if (placementOpen.value || commanderSacrifice.value) return 'self'
   const sel = selection.value
   return sel ? sel.descriptor.kind === 'own_ships' ? 'self' : sel.board ?? sel.descriptor.board ?? 'opponent' : null
 })
-const picking = computed(() => mtActive.value || placementOpen.value || !!selection.value || !!match.pickRequest || !!match.shieldChoice)
+const picking = computed(() => mtActive.value || placementOpen.value || !!commanderSacrifice.value || !!selection.value || !!match.pickRequest || !!match.shieldChoice)
 const boardMode = layout.mode
 const tight = layout.tight
 const dense = layout.dense
 const boardSize = layout.boardSize
 const gameEl = ref<HTMLElement | null>(null)
+const boardTargetPositions = createBoardTargetPositions()
 const handWrapEl = ref<HTMLElement | null>(null)
 const chatPanelEl = ref<HTMLElement | null>(null)
 const chatHeadEl = ref<HTMLElement | null>(null)
@@ -648,10 +681,6 @@ const detailDrag = useFloatingDrag({
   minY: 72,
 })
 
-// 目标面板不占棋盘布局空间，标题可拖动；各类目标复用同一交互。
-const targetPanelEl = ref<HTMLElement | null>(null)
-const targetHeadEl = ref<HTMLElement | null>(null)
-const targetDrag = useFloatingDrag({ handle: targetHeadEl, panel: targetPanelEl, initial: { x: 20, y: 252 }, minY: 80 })
 const mtPanelEl = ref<HTMLElement | null>(null)
 const mtHeadEl = ref<HTMLElement | null>(null)
 const mtDrag = useFloatingDrag({ handle: mtHeadEl, panel: mtPanelEl, initial: { x: 20, y: 252 }, minY: 80 })
@@ -668,7 +697,6 @@ watch([mtActive, mtBoard, compact], async ([on, side, isCompact]) => {
   const width = mtPanelEl.value?.offsetWidth ?? 460
   mtDrag.reset({ x: Math.round(rect.left + rect.width / 2 - width / 2), y: 104 })
 })
-const targetPanelStyle = computed(() => ({ left: targetDrag.state.value.x + 'px', top: targetDrag.state.value.y + 'px', maxHeight: compact.value ? `min(44dvh, calc(100dvh - ${targetDrag.state.value.y + 12}px))` : `calc(100dvh - ${targetDrag.state.value.y + 12}px)` }))
 const targetStatus = computed(() => {
   if (canConfirm.value) return '目标已就绪，可以确认使用。'
   if (selection.value?.card.name === '神之宣告') return selection.value.picks.length < 2 ? '先选择两艘己方战舰作为代价。' : '已选好战舰，请再选择一种效果。'
@@ -679,21 +707,6 @@ const chainBodyEl = ref<HTMLElement | null>(null)
 const chainHeadEl = ref<HTMLElement | null>(null)
 const chainDrag = useFloatingDrag({ handle: chainHeadEl, panel: chainPanelEl, initial: { x: Math.max(12, (window.innerWidth - 600) / 2), y: Math.max(80, (window.innerHeight - 560) / 2) }, minY: 12 })
 const chainPanelStyle = computed(() => ({ left: chainDrag.state.value.x + 'px', top: chainDrag.state.value.y + 'px', maxHeight: `calc(100dvh - ${chainDrag.state.value.y + 12}px)` }))
-
-// 选舰与加盾共用位置，桌面与触屏都可从标题拖动。
-const pickPanelEl = ref<HTMLElement | null>(null)
-const pickHeadEl = ref<HTMLElement | null>(null)
-const pickDrag = useFloatingDrag({
-  handle: pickHeadEl,
-  panel: pickPanelEl,
-  initial: { x: 20, y: 252 },
-  minY: 72,
-})
-const pickPanelStyle = computed(() => ({
-  left: pickDrag.state.value.x + 'px',
-  top: pickDrag.state.value.y + 'px',
-  maxHeight: `calc(100dvh - ${pickDrag.state.value.y + 8}px)`,
-}))
 
 const logPanelEl = ref<HTMLElement | null>(null)
 const logHeadEl = ref<HTMLElement | null>(null)
@@ -912,7 +925,7 @@ function clearCardSelection(): void {
 
 /** The ONE reason function: the card face and the click guard both call it. */
 function cardDisabled(card: CardLike): string {
-  if (selection.value) return '正在选目标：先完成或取消当前选择'
+  if (selection.value || commanderSacrifice.value) return '正在选目标：先完成或取消当前选择'
   return cardDisabledReason(card, state.value, playCtx.value)
 }
 
@@ -927,7 +940,7 @@ function typeLabel(card: CardLike): string {
 function onCardClick(index: number): void {
   const card = hand.value[index]
   if (!card) return
-  if (selection.value) {
+  if (selection.value || commanderSacrifice.value) {
     say('game-target-open', '先完成或取消当前的目标选择，再打出另一张卡。')
     return
   }
@@ -1169,8 +1182,7 @@ function cancelSelection(): void {
   const sel = selection.value
   selection.value = null
   clearCardSelection()
-  if (sel?.isChain && match.chainWindow) match.expandChainWindow()
-
+  if (sel?.chainWindow && match.chainWindow === sel.chainWindow && chainRemaining.value > 0) match.expandChainWindow()
 }
 
 function buildTargets(sel: SelectionState): Record<string, unknown> {
@@ -1204,7 +1216,9 @@ async function confirmSelection(): Promise<void> {
     say('game-target-not-ready', '还不能确认：' + (sel.error || targetHint.value), '按横幅提示先选好目标。')
     return
   }
-  await dispatchCard(sel.card, buildTargets(sel), sel.isChain, sel.priorityToken)
+  if (sel.chainWindow && (match.chainWindow !== sel.chainWindow || Date.now() >= sel.chainWindow.openedAt + sel.chainWindow.countdown * 1000)) return
+  if (sel.priorityToken !== undefined && (Number(priorityRequest.value?.token) !== sel.priorityToken || Date.now() >= Number(priorityRequest.value?.deadline))) return
+  await dispatchCard(sel.card, buildTargets(sel), Boolean(sel.chainWindow), sel.priorityToken)
 }
 
 // ---- board clicks ----------------------------------------------------------
@@ -1247,6 +1261,10 @@ function onCell(board: 'self' | 'opponent', x: number, y: number): void {
   }
   if (placementOpen.value) {
     choosePlacement(board, x, y)
+    return
+  }
+  if (commanderSacrifice.value) {
+    pickCommanderSacrifice(board, x, y)
     return
   }
   if (selection.value) {
@@ -1493,93 +1511,135 @@ async function respondPriority(card: CardLike): Promise<void> {
   await dispatchCard(card, {}, false, token)
 }
 
-async function respondPriorityCommanderSkill(selectedCells?: Array<{ x: number; y: number }>): Promise<void> {
-  const request = priorityRequest.value
-  if (!request || busy.value || priorityRemaining.value <= 0) return
-  priorityError.value = ''
-  busy.value = true
-  try {
-    const ack = await sendBattleEvent('priority_response', {
-      room_id: state.value.room_id,
-      player_id: state.value.player_id,
-      token: request.token,
-      respond: true,
-      use_commander_skill: true,
-      selected_cells: selectedCells ?? [],
-    })
-    if (ack.status === 'success' && state.value.priority_waiting?.token === request.token) {
-      game.applyServerState({ priority_waiting: null })
-    } else if (ack.status !== 'success') {
-      priorityError.value = ack.message || '指挥官技能响应失败'
-      ui.notifyError('game-priority-cmd-err', priorityError.value)
-    }
-  } catch (error) {
-    priorityError.value = '响应失败：' + String(error)
-    ui.notifyError('game-priority-cmd-err', priorityError.value)
-  } finally {
-    busy.value = false
+function commanderOpportunityAvailable(opportunity: CommanderSkillOpportunity, at: number): boolean {
+  if (state.value.state !== 'attacking' || mtActive.value || placementOpen.value || match.pickRequest || shieldOpen.value) return false
+  switch (opportunity.kind) {
+    case 'priority':
+      return Number(priorityRequest.value?.token) === opportunity.token && at < Number(priorityRequest.value?.deadline)
+    case 'chain':
+      return match.chainWindow === opportunity.window && at < opportunity.window.openedAt + opportunity.window.countdown * 1000
+    case 'active':
+      return !match.chainWindow && !state.value.chain_waiting && !state.value.priority_waiting &&
+        Boolean(state.value.commander_state?.can_use_skill) &&
+        state.value.current_phase === opportunity.phase && state.value.round === opportunity.round
   }
 }
 
-const chainCmdShipIdx = ref<number | null>(null)
-const chainLivingShips = computed(() =>
-  (Array.isArray(state.value.ships) ? state.value.ships : [])
-    .map((ship, idx) => ({ ...ship, idx }))
-    .filter((ship) => ship.alive && Array.isArray(ship.positions) && ship.positions.length > 0),
-)
+function currentSacrifice(at: number) {
+  const pick = commanderSacrifice.value
+  if (pick?.roomId !== state.value.room_id || pick?.playerId !== state.value.player_id) return null
+  return pick && commanderOpportunityAvailable(pick.opportunity, at) ? pick : null
+}
 
-async function activateCommanderSkill(selectedCells?: Array<{ x: number; y: number }>): Promise<void> {
-  if (busy.value) return
-  busy.value = true
-  try {
-    const answeredWindow = match.chainWindow
-    const ack = await sendBattleEvent('use_commander_skill', {
-      room_id: state.value.room_id,
-      player_id: state.value.player_id,
-      selected_cells: selectedCells ?? [],
-    })
-    if (ack.status === 'success') {
-      if (answeredWindow && match.chainWindow === answeredWindow) match.closeChainWindow()
+watch(() => currentSacrifice(now.value), (current) => {
+  if (!current) commanderSacrifice.value = null
+})
+
+function beginCommanderSacrifice(opportunity: CommanderSkillOpportunity): void {
+  if (busy.value || selection.value || commanderSacrifice.value || !commanderOpportunityAvailable(opportunity, Date.now())) return
+  clearCardSelection()
+  commanderSacrifice.value = { opportunity, roomId: state.value.room_id, playerId: state.value.player_id, point: null, error: '' }
+  if (opportunity.kind === 'chain') match.collapseChainWindow()
+  announce('弃舰筹谋：请在自己海域选择一艘存活的战舰')
+}
+
+function pickCommanderSacrifice(board: BoardTargetSide, x: number, y: number): void {
+  const pick = currentSacrifice(Date.now())
+  if (!pick || busy.value) return
+  const ship = board === 'self' ? commanderLivingShips.value.find(item => item.positions.some(point => point.x === x && point.y === y)) : undefined
+  if (!ship) {
+    pick.error = '请选择己方海域中一艘存活战舰的格子。'
+    useAudioStore().playUi('reject')
+    return
+  }
+  // 记录该舰的代表坐标；棋盘同时高亮这艘舰的全部格子。
+  pick.point = ship.positions[0]
+  pick.error = ''
+  useAudioStore().playUi('select')
+}
+
+function cancelCommanderSacrifice(): void {
+  const pick = commanderSacrifice.value
+  if (!pick || busy.value) return
+  commanderSacrifice.value = null
+  const opportunity = pick.opportunity
+  if (opportunity.kind === 'chain' && commanderOpportunityAvailable(opportunity, Date.now())) match.expandChainWindow()
+}
+
+async function confirmCommanderSacrifice(): Promise<void> {
+  const pick = currentSacrifice(Date.now())
+  const ship = selectedSacrificeShip.value
+  if (!pick || !ship || busy.value) return
+  await sendCommanderSkill(pick.opportunity, [{ x: ship.positions[0].x, y: ship.positions[0].y }])
+}
+
+function activateCommanderSkill(skillId?: string): void {
+  if (busy.value || selection.value || commanderSacrifice.value) return
+  if (skillId === 'sacrifice_gambit') {
+    if (match.chainWindow?.commanderSkill?.id === skillId) {
+      respondChainCommanderSkill()
+    } else if ((priorityRequest.value?.commander_skill as { id?: string } | undefined)?.id === skillId) {
+      respondPriorityCommanderSkill()
     } else {
-      ui.notifyError('game-commander-skill-err', ack.message || '指挥官技能无法发动')
+      beginCommanderSacrifice({ kind: 'active', phase: state.value.current_phase, round: state.value.round })
     }
-  } catch (error) {
-    ui.notifyError('game-commander-skill-err', '发动失败：' + String(error))
-  } finally {
-    busy.value = false
+    return
   }
+  void sendCommanderSkill({ kind: 'active', phase: state.value.current_phase, round: state.value.round })
 }
 
-async function respondChainCommanderSkill(cmdSkill: Record<string, unknown>): Promise<void> {
+function respondPriorityCommanderSkill(): void {
+  const request = priorityRequest.value
+  if (!request || busy.value || commanderSacrifice.value || Number(request.deadline) <= Date.now()) return
+  const skill = request.commander_skill as { id?: string } | undefined
+  if (!skill) return
+  const opportunity = { kind: 'priority', token: Number(request.token) } as const
+  priorityError.value = ''
+  if (skill.id === 'sacrifice_gambit') beginCommanderSacrifice(opportunity)
+  else void sendCommanderSkill(opportunity)
+}
+
+function respondChainCommanderSkill(): void {
+  const window = match.chainWindow
+  if (!window?.commanderSkill || busy.value || commanderSacrifice.value || Date.now() >= window.openedAt + window.countdown * 1000) return
+  const opportunity = { kind: 'chain', window } as const
+  if (window.commanderSkill.id === 'sacrifice_gambit') beginCommanderSacrifice(opportunity)
+  else void sendCommanderSkill(opportunity)
+}
+
+async function sendCommanderSkill(opportunity: CommanderSkillOpportunity, selectedCells: Point[] = []): Promise<void> {
   if (busy.value) return
-  const needShip = cmdSkill.id === 'sacrifice_gambit'
-  let cells: Array<{ x: number; y: number }> = []
-  if (needShip) {
-    const picked = chainLivingShips.value.find((s) => s.idx === chainCmdShipIdx.value)
-    if (!picked) {
-      ui.notifyError('game-commander-skill-pick', '请先选择一艘己方存活战舰用于弃舰筹谋')
+  const pick = commanderSacrifice.value
+  const answeredWindow = match.chainWindow
+  const isPriority = opportunity.kind === 'priority'
+  const isChain = opportunity.kind === 'chain'
+  const event = isPriority ? 'priority_response' : isChain ? 'chain_response' : 'use_commander_skill'
+  const failure = (message: string) => {
+    if (pick && commanderSacrifice.value === pick) pick.error = message
+    if (opportunity.kind === 'priority' && Number(priorityRequest.value?.token) === opportunity.token) priorityError.value = message
+    ui.notifyError('game-commander-skill-err', message)
+  }
+  busy.value = true
+  try {
+    const ack = await sendBattleEvent(event, {
+      room_id: state.value.room_id,
+      player_id: state.value.player_id,
+      ...(isPriority ? { token: opportunity.token, respond: true } : {}),
+      ...(isChain ? { chain: true } : {}),
+      ...(isPriority || isChain ? { use_commander_skill: true } : {}),
+      selected_cells: selectedCells,
+    })
+    if (ack.status !== 'success') {
+      failure(ack.message || '指挥官技能无法发动')
       return
     }
-    cells = [{ x: picked.positions[0].x, y: picked.positions[0].y }]
-  }
-  const answeredWindow = match.chainWindow
-  busy.value = true
-  try {
-    const ack = await sendBattleEvent('chain_response', {
-      room_id: state.value.room_id,
-      player_id: state.value.player_id,
-      chain: true,
-      use_commander_skill: true,
-      selected_cells: cells,
-    })
-    if (ack.status === 'success') {
-      chainCmdShipIdx.value = null
-      if (match.chainWindow === answeredWindow) match.closeChainWindow()
-    } else {
-      ui.notifyError('game-chain-failed', ack.message || '无法连锁发动指挥官技能')
+    if (commanderSacrifice.value === pick) commanderSacrifice.value = null
+    if (isPriority && Number(priorityRequest.value?.token) === opportunity.token) {
+      game.applyServerState({ priority_waiting: null })
     }
+    if (!isPriority && answeredWindow && match.chainWindow === answeredWindow) match.closeChainWindow()
   } catch (error) {
-    ui.notifyError('game-chain-failed', '连锁响应发送失败：' + String(error))
+    failure('发动失败：' + String(error))
   } finally {
     busy.value = false
   }
@@ -1624,10 +1684,9 @@ async function passPriority(): Promise<void> {
   finally { busy.value = false }
 }
 
-watch(() => state.value.priority_waiting?.token, (token) => {
+watch(() => state.value.priority_waiting?.token, () => {
   priorityCollapsed.value = false
   priorityError.value = ''
-  if (selection.value?.priorityToken !== undefined && selection.value.priorityToken !== token) selection.value = null
 })
 watch([priorityRequest, () => ui.phasePrompts], ([request, enabled]) => {
   if (request && !enabled) void passPriority()
@@ -1638,7 +1697,9 @@ async function respondChain(card: CardLike): Promise<void> {
   if (refusal) { say('game-card-refused', refusal); return }
   const descriptor = targetDescriptor(card.name)
   if (descriptor) {
-    selection.value = { isChain:true, card, index:hand.value.findIndex(c => c.name === card.name), descriptor, board:descriptor.board ?? null, anchor:null, lineDir:'row', picks:[], effectChoice:null, error:'' }
+    const window = match.chainWindow
+    if (!window || chainRemaining.value <= 0) return
+    selection.value = { chainWindow:window, card, index:hand.value.findIndex(c => c.name === card.name), descriptor, board:descriptor.board ?? null, anchor:null, lineDir:'row', picks:[], effectChoice:null, error:'' }
     match.collapseChainWindow()
     return
   }
@@ -1757,6 +1818,10 @@ async function openDiscard(): Promise<void> {
 
 // ---- keyboard: Esc closes the top layer (#47) ------------------------------
 function closeTopLayer(): boolean {
+  if (commanderSacrifice.value) {
+    cancelCommanderSacrifice()
+    return true
+  }
   if (zoomOpen.value) {
     closeZoom()
     return true
@@ -1855,6 +1920,7 @@ watch(
     if (!room || room === seenRoom) return
     seenRoom = room
     commanders.clearSkillEvents()
+    commanderSacrifice.value = null
     // 对局数据由 game store 在接收新房间首帧时清空。
     selection.value = null
     shieldPicks.value = []
@@ -1891,10 +1957,20 @@ watch(
 watch(
   () => match.chainWindow,
   (window) => {
-    if (!window) { if (selection.value?.isChain) selection.value = null; return }
+    if (!window) return
     announce('连锁响应窗口：剩余 ' + String(window.countdown) + ' 秒，可以用速阶 3 的卡响应')
   },
 )
+
+watch([chainWindow, chainRemaining, priorityRequest, priorityRemaining], () => {
+  const sel = selection.value
+  if (!sel) return
+  if (sel.chainWindow && (sel.chainWindow !== match.chainWindow || chainRemaining.value <= 0)) {
+    selection.value = null
+  } else if (sel.priorityToken !== undefined && (sel.priorityToken !== Number(priorityRequest.value?.token) || priorityRemaining.value <= 0)) {
+    selection.value = null
+  }
+})
 
 onMounted(() => {
   releaseMatchChannel = acquireMatchChannel()
@@ -1938,7 +2014,7 @@ function backToLobby(): void {
     :data-boards="boardMode"
     :data-tight="tight ? 'true' : 'false'"
     :data-dense="dense ? 'true' : 'false'"
-    :class="{ 'is-picking': picking, 'is-placing': placementOpen, 'is-mt-targeting': mtActive }"
+    :class="{ 'is-picking': picking, 'is-placing': placementOpen, 'is-mt-targeting': mtActive, 'is-commander-targeting': !!commanderSacrifice }"
     :data-mt-board="mtActive ? mtBoard : undefined"
     :style="boardSize ? { '--board-size': boardSize + 'px', '--mobile-rail-width': layout.mobile.value.railWidth + 'px', '--mobile-hand-height': layout.mobile.value.handHeight + 'px' } : undefined"
     aria-labelledby="screen-game-title"
@@ -1955,8 +2031,7 @@ function backToLobby(): void {
     <CommanderHudBar
       :commander-state="state.commander_state"
       :player-id="state.player_id"
-      :ships="state.ships"
-      :busy="busy"
+      :busy="busy || Boolean(selection || commanderSacrifice)"
       :compact="compact"
       @activate="activateCommanderSkill"
       @interact="interactCommander"
@@ -2001,7 +2076,7 @@ function backToLobby(): void {
             <div class="hud-primary-chips">
               <span class="hud-chip" data-testid="game-phase"><template v-if="compact">{{ state.round }}回 · {{ phaseText.replace('阶段', '') }}</template><template v-else>{{ phaseText }}</template></span>
               <span class="hud-chip hud-chip--turn" data-testid="game-attacker">{{ turnLabel }}</span>
-              <span class="hud-chip" data-testid="game-attacks">攻击 <b>×{{ state.attacks_remaining }}</b></span>
+              <span class="hud-chip" :class="{ 'hud-chip--commander-attack': attackBuff }" data-testid="game-attacks">攻击 <b>×{{ state.attacks_remaining }}</b></span>
               <span
                 v-if="clock.visible"
                 class="hud-chip hud-chip--clock"
@@ -2117,7 +2192,7 @@ function backToLobby(): void {
         </div>
 
         <!-- 手机档：单块棋盘 + 海域切换标签（标题与提交的棋盘同源） -->
-        <div v-if="boardMode === 'tabs' && !selection" class="board-tabs" :class="{ 'has-chain-reminder': (priorityCollapsed && priorityRequest) || (chainCollapsed && chainHasContent) }" role="tablist" aria-label="切换棋盘">
+        <div v-if="boardMode === 'tabs' && !selection && !commanderSacrifice" class="board-tabs" :class="{ 'has-chain-reminder': (priorityCollapsed && priorityRequest) || (chainCollapsed && chainHasContent) }" role="tablist" aria-label="切换棋盘">
           <button
             type="button"
             class="board-tab"
@@ -2139,7 +2214,7 @@ function backToLobby(): void {
         <!-- 双棋盘：桌面并排常驻；手机档按标签只显示一块 -->
         <div class="boards-container" :data-board-mode="boardMode">
           <button
-            v-if="priorityCollapsed && priorityRequest && ui.phasePrompts && (!compact || !selection)"
+            v-if="priorityCollapsed && priorityRequest && ui.phasePrompts && !commanderSacrifice && (!compact || !selection)"
             type="button" class="game-chain-reopen"
             :class="{ 'is-counting': priorityRemaining > 0 }"
             data-testid="game-phase-reopen" @click="priorityCollapsed = false"
@@ -2149,7 +2224,7 @@ function backToLobby(): void {
             <template v-else>阶段转换待响应 · 剩余 {{ priorityRemaining }} 秒 · 打开</template>
           </button>
           <button
-            v-if="chainCollapsed && chainHasContent && !(priorityCollapsed && priorityRequest && ui.phasePrompts) && (!compact || !selection)"
+            v-if="chainCollapsed && chainHasContent && !commanderSacrifice && !(priorityCollapsed && priorityRequest && ui.phasePrompts) && (!compact || !selection)"
             type="button"
             class="game-chain-reopen"
             :class="{ 'is-counting': !!chainWindow && chainRemaining > 0 }"
@@ -2171,17 +2246,19 @@ function backToLobby(): void {
               :title="'你的海域 · ' + selfName"
               :subtitle="'存活 ' + state.remaining_ships + ' 艘' + (frozenMine.size ? ' · 你的 3×3 区域被冻结' : '')"
               :cells="selfCells"
+              :commander-cue="commanderBoardCue?.side === 'self' ? commanderBoardCue : null"
+              :show-cell-hints="!commanderSacrifice"
               :selected="selfSelectedKeys"
               :preview="selfBoardPreviewKeys"
               :legal="legalKeys"
               :selection-board="boardSelectionSide"
-              :selection-label="mtActive ? mtTechName : placementOpen ? placementTitle : selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
-              :selection-hint="mtActive ? mtHint : placementOpen ? placementHint : selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
+              :selection-label="mtActive ? mtTechName : placementOpen ? placementTitle : commanderSacrifice ? commanderSacrificeLabel : selection?.card.name || (shieldOpen ? '仁王之盾' : '')"
+              :selection-hint="mtActive ? mtHint : placementOpen ? placementHint : commanderSacrifice ? commanderSacrificeHint : selection ? targetHint : (pendingPick?.message || '点击己方战舰选择目标。')"
               :selection-kind="boardPreviewKind"
               :selection-tone="boardPreviewTone"
               :selection-badge="boardPreviewBadge"
               :hidden="!showSelfBoard"
-              :picking="mtActive || placementOpen || !!selection || !!match.pickRequest || shieldOpen"
+              :picking="picking"
               @hover="point => previewTarget('self', point)"
               @cell="(x: number, y: number) => onCell('self', x, y)"
             />
@@ -2194,6 +2271,7 @@ function backToLobby(): void {
               :title="'对手海域 · ' + opponentName"
               :subtitle="'已探明 ' + shots + ' / 36 格 · 命中 ' + hits + (frozenTheirs.size ? ' · 对方 3×3 区域被冻结' : '')"
               :cells="opponentCells"
+              :commander-cue="commanderBoardCue?.side === 'opponent' ? commanderBoardCue : null"
               :preview="opponentBoardPreviewKeys"
               :selected="opponentSelectedKeys"
               :legal="legalKeys"
@@ -2204,7 +2282,7 @@ function backToLobby(): void {
               :selection-tone="boardPreviewTone"
               :selection-badge="boardPreviewBadge"
               :hidden="!showOpponentBoard"
-              :picking="mtActive || placementOpen || !!selection"
+              :picking="mtActive || placementOpen || !!commanderSacrifice || !!selection"
               @hover="point => previewTarget('opponent', point)"
               @cell="(x: number, y: number) => onCell('opponent', x, y)"
             />
@@ -2214,20 +2292,30 @@ function backToLobby(): void {
       </div>
 
       <!-- 右列：连锁结算 / 卡牌详情 / 计数与主行动（原 main 的 .arena-rail + 详情列） -->
-      <aside class="arena-rail" aria-label="连锁、卡牌与操作">
+      <aside class="arena-rail" :class="{ 'arena-rail--compact-chain': compact && !picking && chainList.some(item => item.skillId) }" aria-label="连锁、卡牌与操作">
         <section class="arena-rail-panel arena-chain-slot" data-testid="game-chain-rail">
           <header class="arena-rail-head"><span>连锁结算</span><span v-if="chainList.length" class="arena-chain-count">{{ chainList.length }} 重</span></header>
           <!-- 原 main 的 .chain-stack：104×156 卡面竖向叠放，相邻压住约 1/3 -->
           <ol v-if="chainList.length" class="chain-stack" data-testid="game-chain-stack">
             <li
               v-for="(item, index) in chainList"
-              :key="'chain-rail-' + index"
+              :key="'chain-rail-' + index + '-' + item.caster + '-' + item.name"
               class="chain-stack__item"
               :class="[{ 'is-spent': item.negated }, masteryClass(item.masteryTier)]"
               :data-testid="'game-chain-item-' + index"
               :data-skin-id="item.skinId || undefined"
               :title="item.name"
             >
+              <CommanderSkillCard
+                v-if="item.skillId"
+                :skill-id="item.skillId"
+                :order="index + 1"
+                :speed="item.speed"
+                :negated="item.negated || (commanderCue?.stage === 'negated' && skillMatches(item.skillId, item.caster))"
+                :entering="commanderCue?.stage === 'chain_enter' && skillMatches(item.skillId, item.caster)"
+              />
+              <span v-if="item.skillId" class="chain-stack__label">{{ item.name }}</span>
+              <template v-else>
               <span class="chain-stack__order" aria-hidden="true">{{ index + 1 }}</span>
               <CardFaceArt
                 v-if="chainArt(item)"
@@ -2241,6 +2329,7 @@ function backToLobby(): void {
               <span v-else class="chain-stack__name" :data-testid="'game-chain-item-' + index + '-name'">{{ item.name }}</span>
               <span v-if="chainArt(item)" class="chain-stack__label">{{ item.name }}</span>
               <span v-if="item.negated" class="arena-chain-negated">已无效</span>
+              </template>
             </li>
           </ol>
           <p v-else class="arena-rail-empty" data-testid="game-chain-empty">暂无连锁</p>
@@ -2356,7 +2445,12 @@ function backToLobby(): void {
       <div class="game-hand-head">
         <CardDrawAnimation />
         <span class="game-hand-stats" data-testid="game-stats">命中 {{ hits }} · 开火 {{ shots }}</span>
-        <span class="game-hand-count" data-testid="game-hand-counter">手牌 {{ hand.length }} 张</span>
+        <span class="game-hand-count" data-testid="game-hand-counter">
+          手牌 {{ hand.length }} 张
+          <span v-if="extraDraw" :key="extraDraw.id" class="commander-draw-note" data-testid="commander-draw-cue" role="status">
+            <CommanderSkillIcon skill-id="sacrifice_gambit" />摸牌 +{{ extraDraw.count }}
+          </span>
+        </span>
       </div>
       <div
         class="game-hand"
@@ -2534,15 +2628,16 @@ function backToLobby(): void {
       </div>
     </section>
 
-    <section v-if="selection" ref="targetPanelEl" :style="targetPanelStyle" class="game-target battle-prompt" :class="{ 'is-dragging': targetDrag.state.value.dragging }" data-testid="game-target" aria-label="目标选择" role="region">
-      <header ref="targetHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && targetDrag.onPointerDown($event)">
+    <BoardTargetWindow v-if="selection" :side="targetBoard ?? 'opponent'" :arena="gameEl" :positions="boardTargetPositions" class="game-target battle-prompt" data-testid="game-target" aria-label="目标选择" role="region">
+      <template #head>
         <div><p class="battle-prompt__context">卡牌目标选择</p><h2 class="game-target__title" data-testid="game-target-title">{{ targetTitle }}</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
         <CardFaceArt v-if="ownCardArt(selection.card.name)" class="battle-prompt__card-art" :name="selection.card.name" :skin-id="ownSkinId(selection.card.name)" context="hand" alt="" draggable="false" />
-      </header>
+      </template>
       <div class="game-target__main">
         <ol v-if="selection.card.name === '神之宣告'" class="battle-prompt__steps" aria-label="施放步骤"><li :class="{ 'is-complete': selection.picks.length === 2 }">选两艘己方战舰</li><li :class="{ 'is-current': selection.picks.length === 2, 'is-complete': selection.effectChoice !== null }">选择一种效果</li></ol>
         <p class="game-target__hint" data-testid="game-target-hint">{{ targetHint }}</p>
         <p v-if="selection.priorityToken !== undefined" class="battle-prompt__deadline" data-testid="game-phase-target-countdown">阶段响应剩余 {{ priorityRemaining }} 秒，超时自动放行。</p>
+        <p v-else-if="selection.chainWindow" class="battle-prompt__deadline">连锁响应剩余 {{ chainRemaining }} 秒，超时自动放行。</p>
         <p class="game-target__selected battle-prompt__progress" data-testid="game-target-selected" aria-live="polite">已选：{{ pickCountText }}</p>
         <p v-if="selection.error" class="game-target__error battle-prompt__error" data-testid="game-target-error" role="alert">{{ selection.error }}</p>
       </div>
@@ -2565,7 +2660,24 @@ function backToLobby(): void {
           <button type="button" class="button button--ghost" data-testid="game-target-cancel" @click="cancelSelection">取消</button>
         </div>
       </div>
-    </section>
+    </BoardTargetWindow>
+
+    <BoardTargetWindow v-if="commanderSacrifice" side="self" :arena="gameEl" :positions="boardTargetPositions" class="game-target battle-prompt" data-testid="commander-sacrifice-picker" aria-label="弃舰筹谋选择牺牲战舰" role="region">
+      <template #head>
+        <div><p class="battle-prompt__context">指挥官技能</p><h2>弃舰筹谋 · 选择战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div>
+      </template>
+      <div class="game-target__main">
+        <p class="game-target__hint">{{ commanderSacrificeHint }}</p>
+        <p v-if="commanderSacrifice.opportunity.kind === 'priority'" class="battle-prompt__deadline" data-testid="commander-sacrifice-countdown">阶段响应剩余 {{ priorityRemaining }} 秒</p>
+        <p v-else-if="commanderSacrifice.opportunity.kind === 'chain'" class="battle-prompt__deadline" data-testid="commander-sacrifice-countdown">连锁响应剩余 {{ chainRemaining }} 秒</p>
+        <p class="game-target__selected battle-prompt__progress" data-testid="commander-sacrifice-selected" aria-live="polite">{{ selectedSacrificeShip ? '已选中 1 艘战舰，可点击另一艘更换。' : '尚未选中战舰' }}</p>
+        <p v-if="commanderSacrifice.error" class="battle-prompt__error" role="alert">{{ commanderSacrifice.error }}</p>
+      </div>
+      <div class="game-target__row game-target__actions">
+        <button type="button" class="button game-target__confirm" data-testid="commander-sacrifice-confirm" :disabled="!selectedSacrificeShip || busy" @click="confirmCommanderSacrifice">{{ busy ? '正在发动…' : '确认发动' }}</button>
+        <button type="button" class="button button--ghost" data-testid="commander-sacrifice-cancel" :disabled="busy" @click="cancelCommanderSacrifice">取消</button>
+      </div>
+    </BoardTargetWindow>
 
     <Transition name="chain-fade">
     <div
@@ -2590,10 +2702,10 @@ function backToLobby(): void {
       <section v-if="chainWindow" class="game-chain-window" data-testid="game-chain-window">
         <div ref="chainBodyEl" class="game-chain-window__body" :class="{ 'is-reading': compact && mobileChainRead }">
         <p class="game-chain-window__card">
-          {{ chainWindow.caster === state.player_id ? '你发动了魔法卡' : '对方发动了魔法卡' }}
+          {{ chainWindow.caster === state.player_id ? '你发动了' : '对方发动了' }}{{ chainWindow.triggerSkillId ? '指挥官技能' : '魔法卡' }}
           <span class="chain-preview-anchor" @mouseleave="!compact && (chainPreviewSource = '')">
             <button type="button" class="game-chain-ref" data-testid="game-chain-window-card" :aria-describedby="chainPreviewSource === 'trigger' ? 'chain-trigger-preview' : undefined"
-              @mouseenter="canHover && !compact && inspectChain(chainWindow.card, 'trigger')" @focus="canHover && !compact && inspectChain(chainWindow.card, 'trigger')" @blur="!compact && (chainPreviewSource = '')" @click="inspectChain(chainWindow.card, 'trigger')">【{{ chainWindow.card?.name || '魔法卡' }}】</button>
+              @mouseenter="canHover && !compact && inspectChain(chainWindow.card, 'trigger')" @focus="canHover && !compact && inspectChain(chainWindow.card, 'trigger')" @blur="!compact && (chainPreviewSource = '')" @click="inspectChain(chainWindow.card, 'trigger')"><CommanderSkillIcon v-if="chainWindow.triggerSkillId" :skill-id="chainWindow.triggerSkillId" />【{{ chainWindow.card?.name || '魔法卡' }}】</button>
             <span v-if="chainInspect && chainPreviewSource === 'trigger'" id="chain-trigger-preview" class="chain-effect-preview" data-testid="game-chain-inspect" role="tooltip">
               <b data-testid="game-chain-inspect-name">{{ chainInspect.name }}</b><small>速阶 {{ chainInspect.speed }}</small><span data-testid="game-chain-inspect-desc">{{ chainInspect.description || '暂无效果描述' }}</span>
             </span>
@@ -2610,28 +2722,18 @@ function backToLobby(): void {
             <div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:10px;border:1px solid #facc15;background:rgb(234 179 84 / 12%);">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
                 <div>
-                  <strong style="color:#fef08a;">【{{ chainWindow.commanderSkill.name }}】</strong>
+                  <strong style="color:#fef08a;"><CommanderSkillIcon :skill-id="String(chainWindow.commanderSkill.id)" />【{{ chainWindow.commanderSkill.name }}】</strong>
                   <small style="color:#bae6fd;margin-left:6px;">{{ chainWindow.commanderSkill.commander_name }} · 速阶 {{ chainWindow.commanderSkill.speed || 3 }} 指挥官技能</small>
                 </div>
                 <button
                   type="button"
                   class="button button--primary"
                   data-testid="game-chain-commander-skill-btn"
-                  :disabled="busy || (chainWindow.commanderSkill.id === 'sacrifice_gambit' && chainCmdShipIdx === null)"
-                  @click="respondChainCommanderSkill(chainWindow.commanderSkill)"
-                >连锁发动指挥官技能</button>
+                  :disabled="busy || chainRemaining <= 0"
+                  @click="respondChainCommanderSkill"
+                >{{ chainWindow.commanderSkill.id === 'sacrifice_gambit' ? '选择战舰' : '连锁发动指挥官技能' }}</button>
               </div>
               <small style="color:#dcebf7;">{{ chainWindow.commanderSkill.description }}</small>
-              <div v-if="chainWindow.commanderSkill.id === 'sacrifice_gambit'" style="display:flex;flex-wrap:wrap;gap:6px;">
-                <button
-                  v-for="ship in chainLivingShips"
-                  :key="'chain-ship-' + ship.idx"
-                  type="button"
-                  class="button button--ghost"
-                  :style="chainCmdShipIdx === ship.idx ? 'border-color:#facc15;color:#fef08a;' : ''"
-                  @click="chainCmdShipIdx = ship.idx"
-                >战舰#{{ ship.idx + 1 }} ({{ ship.positions.map(p => `${p.x},${p.y}`).join(' ') }})</button>
-              </div>
             </div>
           </div>
           <div v-for="(card, index) in speed3Hand" :key="chainCardTestId(card, index, speed3Hand)" class="chain-preview-anchor" @mouseleave="!compact && (chainPreviewSource = '')">
@@ -2660,8 +2762,8 @@ function backToLobby(): void {
     </div>
     </Transition>
 
-    <section v-if="shieldOpen && !cardEffects.busy && !shieldSubmitting" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-shield-choice game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
-      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && pickDrag.onPointerDown($event)"><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><CardFaceArt v-if="ownCardArt('仁王之盾')" class="battle-prompt__card-art" name="仁王之盾" :skin-id="ownSkinId('仁王之盾')" context="hand" alt="" draggable="false" /></header>
+    <BoardTargetWindow v-if="shieldOpen && !cardEffects.busy && !shieldSubmitting" side="self" :arena="gameEl" :positions="boardTargetPositions" class="game-dialog game-shield-choice game-pick-float battle-prompt" data-testid="game-shield-choice" role="dialog" aria-label="仁王之盾选择">
+      <template #head><div><p class="battle-prompt__context">选择保护目标</p><h2 class="game-dialog__title" data-testid="game-shield-choice-title">「仁王之盾」：请选择要保护的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div><CardFaceArt v-if="ownCardArt('仁王之盾')" class="battle-prompt__card-art" name="仁王之盾" :skin-id="ownSkinId('仁王之盾')" context="hand" alt="" draggable="false" /></template>
       <p class="game-dialog__hint" data-testid="game-shield-choice-hint">在自己海域点击高亮的战舰格；再点一次取消选择。</p>
       <p class="game-dialog__hint battle-prompt__progress" data-testid="game-shield-choice-count" aria-live="polite">已选 {{ shieldPicks.length }} / 3 艘</p>
       <p v-if="shieldError" class="game-dialog__error" data-testid="game-shield-choice-error">{{ shieldError }}</p>
@@ -2670,13 +2772,13 @@ function backToLobby(): void {
         <button type="button" class="button button--primary" data-testid="game-shield-choice-confirm" :disabled="shieldPicks.length === 0" @click="confirmShieldChoice">确认加盾</button>
         <button type="button" class="button button--ghost" data-testid="game-shield-choice-cancel" @click="cancelShieldChoice">取消选择</button>
       </div>
-    </section>
+    </BoardTargetWindow>
 
-    <section v-if="match.pickRequest && !cardEffects.busy && !placementOpen" ref="pickPanelEl" :style="pickPanelStyle" class="game-dialog game-pick game-pick-float battle-prompt" :class="{ 'is-dragging': pickDrag.state.value.dragging }" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
-      <header ref="pickHeadEl" class="battle-prompt__head battle-prompt__handle" @pointerdown="!compact && pickDrag.onPointerDown($event)"><div><p class="battle-prompt__context">等待你的选择</p><h2 class="game-dialog__title">请选择一艘自己的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div></header>
+    <BoardTargetWindow v-if="match.pickRequest && !cardEffects.busy && !placementOpen" side="self" :arena="gameEl" :positions="boardTargetPositions" class="game-dialog game-pick game-pick-float battle-prompt" data-testid="game-ship-pick" role="alertdialog" aria-label="选船">
+      <template #head><div><p class="battle-prompt__context">等待你的选择</p><h2 class="game-dialog__title">请选择一艘自己的战舰</h2><span class="battle-prompt__drag-note">拖动标题可移动</span></div></template>
       <p class="game-dialog__hint" data-testid="game-ship-pick-message">{{ match.pickRequest.message }}</p>
       <p class="game-dialog__hint battle-prompt__status">{{ pickSubmitting ? '正在确认选择…' : '在己方海域点击高亮的战舰，即可确认选择。' }}</p>
-    </section>
+    </BoardTargetWindow>
 
 
     <MobileCardReader
@@ -2846,12 +2948,12 @@ function backToLobby(): void {
       <p class="game-discard-detail__meta">{{ typeLabel(discardDetail) }}</p>
       <p class="game-discard-detail__desc">{{ discardDetailInfo?.description || '服务端没有下发这张卡的效果描述。' }}</p>
     </div>
-    <ChainAnimationOverlay :suspended="Boolean(placementRequest || selection || match.pickRequest || match.shieldChoice || state.needs_reset)" />
+    <ChainAnimationOverlay :suspended="Boolean(placementRequest || selection || commanderSacrifice || match.pickRequest || match.shieldChoice || state.needs_reset)" />
     <CardEffectOverlay />
-    <MagicPlacementPanel v-if="placementOpen && placementRequest" :request="placementRequest" :kind="placementKind" :title="placementTitle" :hint="placementHint" :selected="placementSelected" :busy="placementBusy" :error="placementError" :compact="compact" :tight="tight" @confirm="submitPlacement()" @cancel="submitPlacement(true)" />
+    <MagicPlacementPanel v-if="placementOpen && placementRequest" :request="placementRequest" :arena="gameEl" :positions="boardTargetPositions" :kind="placementKind" :title="placementTitle" :hint="placementHint" :selected="placementSelected" :busy="placementBusy" :error="placementError" :compact="compact" :tight="tight" @confirm="submitPlacement()" @cancel="submitPlacement(true)" />
     <MagicChoicePanel />
     <MagicDiscardPanel />
-    <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && !priorityCollapsed && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" :ships="state.ships" @select="respondPriority" @select-commander-skill="respondPriorityCommanderSkill" @pass="passPriority" @collapse="priorityCollapsed = true" />
+    <PhasePriorityPrompt :open="Boolean(priorityRequest && ui.phasePrompts && !priorityCollapsed && !commanderSacrifice && selection?.priorityToken === undefined)" :request="priorityRequest" :now="now" :busy="busy" :error="priorityError" @select="respondPriority" @select-commander-skill="respondPriorityCommanderSkill" @pass="passPriority" @collapse="priorityCollapsed = true" />
 
   </section>
 </template>

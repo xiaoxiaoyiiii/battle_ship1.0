@@ -63,6 +63,10 @@ export interface ReplayChainItem {
   card: string
   side: 'p1' | 'p2' | null
   negated: boolean
+  item_kind?: 'commander_skill'
+  skill_id?: string
+  commander_id?: string
+  speed?: number
 }
 
 export interface ReplayStep {
@@ -269,6 +273,12 @@ export function normalizeChain(value: unknown): ReplayChainItem[] {
       card,
       side: raw.side === 'p1' || raw.side === 'p2' ? raw.side : null,
       negated: raw.negated === true,
+      ...(raw.item_kind === 'commander_skill' && typeof raw.skill_id === 'string' ? {
+        item_kind: raw.item_kind,
+        skill_id: raw.skill_id,
+        commander_id: asString(raw.commander_id),
+      } : {}),
+      ...(typeof raw.speed === 'number' && Number.isInteger(raw.speed) ? { speed: raw.speed } : {}),
     })
   }
   return out

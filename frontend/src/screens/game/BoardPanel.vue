@@ -2,6 +2,7 @@
 import { computed, ref, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import BoardAreaPreview from './BoardAreaPreview.vue'
 import BoardCellIcon from './BoardCellIcon.vue'
+import CommanderBoardPulse from './CommanderBoardPulse.vue'
 import { cellVisualState, cellHints } from './cellPresentation'
 import type { BoardCell } from './view'
 
@@ -39,15 +40,19 @@ const props = withDefaults(defineProps<{
   picking?: boolean
   interactive?: boolean
   cellPrefix?: string
+  commanderCue?: { key: string; kind: 'sonar' | 'sacrifice' | 'shield'; cells?: string[] } | null
+  showCellHints?: boolean
 }>(), {
   // 实战调用方省略此属性；观看页显式传 false，避免布尔属性缺省禁用实战。
   interactive: true,
+  showCellHints: true,
 })
 
 const emit = defineEmits<{ (event: 'cell', x: number, y: number): void; (event: 'hover', point: { x: number; y: number } | null): void }>()
 
 const selectedSet = computed(() => new Set(props.selected ?? []))
 const previewSet = computed(() => new Set(props.preview ?? []))
+const commanderMarks = computed(() => new Set(props.commanderCue?.cells ?? []))
 const legalSet = computed(() => new Set(
   props.picking && (!props.selectionBoard || props.selectionBoard === props.board) ? props.legal ?? [] : [],
 ))
@@ -80,7 +85,7 @@ const hints = computed(() => hintedCell.value && !props.hidden ? hintsFor(hinted
 function hideHint() { hintedKey.value = null }
 async function showHint(cell: BoardCell, event: Event) {
   // 触屏点击的目标说明已在停靠面板中显示，不再留一个浮动提示盖住海域。
-  if (window.matchMedia('(hover: none)').matches) { hideHint(); return }
+  if (!props.showCellHints || window.matchMedia('(hover: none)').matches) { hideHint(); return }
   if (!hintsFor(cell).length) { hideHint(); return }
   const anchor = (event.currentTarget as HTMLElement).getBoundingClientRect()
   hintedKey.value = cell.key
@@ -93,7 +98,7 @@ async function showHint(cell: BoardCell, event: Event) {
   const top = Math.max(12, Math.min(innerHeight - bounds.height - 12, preferred))
   hintPosition.value = { left: left + 'px', top: top + 'px', visibility: 'visible' }
 }
-watch(() => props.hidden, hideHint)
+watch(() => [props.hidden, props.showCellHints], hideHint)
 onMounted(() => {
   window.addEventListener('resize', hideHint)
   window.addEventListener('scroll', hideHint, true)
@@ -186,7 +191,7 @@ function onCellFocus(index: number): void {
       role="grid"
       :aria-readonly="interactive === false ? true : undefined"
       tabindex="0"
-      :aria-label="title + (interactive === false ? '，只读棋盘，方向键查看' : '，方向键移动，Enter 开炮')"
+      :aria-label="title + (interactive === false ? '，只读棋盘，方向键查看' : picking ? '，方向键移动，Enter 选择目标' : '，方向键移动，Enter 开炮')"
       @keydown="onKeydown"
     >
       <div class="board__axis board__axis--columns" aria-hidden="true">
@@ -200,6 +205,11 @@ function onCellFocus(index: number): void {
         :cells="areaPreviewCells"
         :tone="selectionTone ?? 'default'"
         :label="selectionBadge"
+      />
+      <CommanderBoardPulse
+        v-if="commanderCue?.kind === 'shield'"
+        :key="commanderCue.key"
+        kind="shield"
       />
       <button
         v-for="(cell, index) in cells"
@@ -249,6 +259,11 @@ function onCellFocus(index: number): void {
         @click="onCell(cell)"
       >
         <BoardCellIcon v-if="!['empty', 'hole'].includes(cellVisualState(cell))" :kind="cellVisualState(cell)" />
+        <CommanderBoardPulse
+          v-if="commanderCue && commanderMarks.has(cell.key)"
+          :key="commanderCue.key"
+          :kind="commanderCue.kind"
+        />
         <span v-if="cell.trap && cellVisualState(cell) !== 'trap' && !cell.sunk" class="cell__badge cell__badge--trap" aria-hidden="true">△</span>
         <span v-if="cell.frozen" class="cell__badge cell__badge--frozen" aria-hidden="true">冻</span>
       </button>

@@ -29,7 +29,7 @@ function legacyFrame(payload: ReplayPayload, k: number): ViewFrame {
   const frame: ViewFrame = { version: 2, audience: 'replay',
     context: { phase: old.phase, round: old.round, current_side: null, attacks_remaining: null },
     rules: { known: false, ids: [], entries: [] }, players: {} as ViewFrame['players'], boards: {} as ViewFrame['boards'],
-    chain: { chain: old.chain.map(c => ({ card: c.card, seat: c.side, negated: c.negated })) },
+    chain: { chain: old.chain.map(({ side, ...row }) => ({ ...row, seat: side })) },
   }
   for (const side of sides) {
     frame.players[side] = { name: (side === 'p1' ? payload.p1Name : payload.p2Name) || side,
@@ -61,7 +61,7 @@ export function decodeRecording(raw: unknown): Recording | null {
   for (const e of raw.events) {
     if (!object(e) || !Number.isInteger(e.seq) || Number(e.seq) <= lastSeq || !Number.isInteger(e.step) || Number(e.step) < lastStep) return null
     if (e.type !== 'state' && e.type !== 'presentation') return null
-    if (e.type === 'state' && (!object(e.patch) || Object.keys(e.patch).some(key => !['context', 'rules', 'players', 'boards', 'chain'].includes(key)))) return null
+    if (e.type === 'state' && (!object(e.patch) || Object.keys(e.patch).some(key => !['context', 'rules', 'players', 'boards', 'chain', 'commanders'].includes(key)))) return null
     if (e.type === 'state') {
       const next = normalizeViewFrame({ ...validated, ...e.patch as Json })
       if (!next) return null

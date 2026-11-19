@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 
+from .commanders.catalog import commander_chain_identity
+
 REPLAY_VERSION = 2
 MAX_STEPS = 2000
 # v2 同一步会记录多次完整板块变化，旧版 512 KiB 连普通长局也装不下。
@@ -551,7 +553,7 @@ def _phase_value(value):
 
 
 def _chain_items(room, chain=None):
-    """Compact public chain rows: {"card", "side", "negated"}."""
+    """记录公开牌名、座位、无效状态和指挥官技能标识。"""
     items = list(chain if chain is not None else (getattr(room, "chain", None) or []))
     out = []
     for item in items:
@@ -566,6 +568,11 @@ def _chain_items(room, chain=None):
             "card": str(name),
             "side": _side_label(room, pid),
             "negated": bool(getattr(item, "negated", False)),
+            **commander_chain_identity(
+                getattr(item, "item_kind", None),
+                getattr(item, "commander_id", None),
+                getattr(item, "skill_id", None),
+            ),
         })
     return out
 

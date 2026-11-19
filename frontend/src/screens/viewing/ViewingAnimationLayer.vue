@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { drawChainFrame } from '../game/chainAnimationCanvas'
 import { planChainStage } from '../game/chainStageLayout'
 import { drawCardEffect, drawCounterEffect, warmCardEffectCaches, clearCardEffectCaches } from '../game/cardEffects/canvas'
 import type { CardEffectKind, EffectCell, EffectRect } from '../game/cardEffects/types'
-import { chainFrame } from './presentation'
+import { chainFrame, commanderPresentation } from './presentation'
 import { resolveCardArtUrl } from '../../cards/skinArt'
 import { createChainSkinFaces } from '../game/chainSkinFaces'
 import type { Json } from './types'
 
 const props = withDefaults(defineProps<{ cue: Json | null; progress: number; context?: 'spectate' | 'replay' }>(), { context: 'spectate' })
 const canvas = ref<HTMLCanvasElement | null>(null), art = new Map<string, HTMLImageElement>()
+const commander = computed(() => commanderPresentation(props.cue))
 function image(name: string, skinId?: string | null): HTMLImageElement | null {
   const key = name + '::' + (skinId || 'default')
   let img = art.get(key)
@@ -22,6 +23,9 @@ let pendingDraw = 0
 function requestDraw(): void {
   if (pendingDraw || typeof requestAnimationFrame === 'undefined') return
   pendingDraw = requestAnimationFrame(() => { pendingDraw = 0; draw() })
+}
+function redrawViewport(): void {
+  if (props.cue) requestDraw()
 }
 const skinFaces = createChainSkinFaces(props.context, requestDraw)
 function rect(selector: string): EffectRect | null {
@@ -36,6 +40,70 @@ function points(values: unknown, side: string): EffectCell[] {
     return r ? [{ ...r, cx: r.x + r.w / 2, cy: r.y + r.h / 2, gx: p.x, gy: p.y }] : []
   })
 }
+function paintCommander(ctx: CanvasRenderingContext2D, cast: NonNullable<typeof commander.value>, progress: number): void {
+  const region = board(cast.board)
+  if (!region) return
+  const { x, y, w, h } = region
+  const canceled = cast.stage === 'negated' || cast.failed
+  const intensity = Math.min(1, .24 + progress * 5, (1 - progress) * 4)
+  const color = canceled ? '#fa9199' : cast.skill.accent
+  const size = Math.min(w, h)
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.shadowColor = color
+  ctx.shadowBlur = 10
+  ctx.lineWidth = 2
+  ctx.globalAlpha = intensity * .9
+  ctx.beginPath()
+  ctx.roundRect(x - 2, y - 2, w + 4, h + 4, 7)
+  ctx.stroke()
+  ctx.clip()
+  ctx.globalAlpha = intensity * .065
+  ctx.fillRect(x, y, w, h)
+  ctx.globalAlpha = intensity * .8
+  const cx = x + w / 2, cy = y + h / 2
+  ctx.beginPath()
+  if (canceled) {
+    const reach = size * .10
+    ctx.moveTo(cx - reach, cy - reach); ctx.lineTo(cx + reach, cy + reach)
+    ctx.moveTo(cx + reach, cy - reach); ctx.lineTo(cx - reach, cy + reach)
+  } else if (cast.skill.id === 'firepower_control') {
+    const offset = progress * w * .5
+    for (let i = 0; i < 3; i++) {
+      ctx.moveTo(x - w * .5 + offset, y + h * (.45 + .14 * i))
+      ctx.lineTo(x + w * .6 + offset, y + h * (.22 + .14 * i))
+    }
+  } else if (cast.skill.id === 'dauntless_fleet') {
+    const reach = size * .19 * (1 + progress * .3)
+    const gap = reach * .42
+    ctx.moveTo(cx - gap, cy - reach); ctx.lineTo(cx - reach, cy - reach * .55)
+    ctx.lineTo(cx - reach, cy + reach * .32); ctx.lineTo(cx - gap, cy + reach)
+    ctx.moveTo(cx + gap, cy - reach); ctx.lineTo(cx + reach, cy - reach * .55)
+    ctx.lineTo(cx + reach, cy + reach * .32); ctx.lineTo(cx + gap, cy + reach)
+  } else if (cast.skill.id === 'sacrifice_gambit') {
+    const cardWidth = size * .14, cardHeight = size * .22
+    const spread = size * (.035 + progress * .06)
+    for (const direction of [-1, 1]) {
+      ctx.save()
+      ctx.translate(cx + direction * spread, cy - direction * cardHeight * .14)
+      ctx.rotate(direction * .24)
+      ctx.roundRect(-cardWidth / 2, -cardHeight / 2, cardWidth, cardHeight, 3)
+      ctx.restore()
+    }
+  } else {
+    const radius = size * (.08 + progress * .39)
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+    ctx.moveTo(cx + radius * .66, cy)
+    ctx.arc(cx, cy, radius * .66, 0, Math.PI * 2)
+  }
+  ctx.stroke()
+  for (const cell of points(cast.cells, cast.board)) {
+    const inset = Math.max(2, cell.w * .1)
+    ctx.strokeRect(cell.x + inset, cell.y + inset, cell.w - 2 * inset, cell.h - 2 * inset)
+  }
+  ctx.restore()
+}
 function draw(): void {
   const c = canvas.value, cue = props.cue
   if (!c || !cue) { skinFaces.clear(); return }
@@ -48,6 +116,10 @@ function paint(c: HTMLCanvasElement, cue: Json): void {
   const ctx = c.getContext('2d'); if (!ctx) return
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
   const progress = props.progress
+  if (commander.value) {
+    paintCommander(ctx, commander.value, progress)
+    return
+  }
   if (cue.stage === 'attack_windup' || cue.stage === 'attack_tail') {
     const point = cue.cell as Json, result = cue.result as Json
     const target = points([point], String(cue.target))[0], source = board(String(cue.attacker))
@@ -86,10 +158,25 @@ function paint(c: HTMLCanvasElement, cue: Json): void {
   drawChainFrame(ctx, frame, planChainStage({ width, height, count: frame.cue.cards.length, insets: { top: 0, right: 0, bottom: 0, left: 0 } }), image, skinFaces.lookup)
 }
 watch(() => [props.cue, props.progress], () => void nextTick(draw), { flush: 'post' })
-onMounted(warmCardEffectCaches)
+onMounted(() => {
+  warmCardEffectCaches()
+  redrawViewport()
+  window.addEventListener('resize', redrawViewport)
+  window.addEventListener('scroll', redrawViewport, true)
+})
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', redrawViewport)
+  window.removeEventListener('scroll', redrawViewport, true)
   clearCardEffectCaches(); art.clear(); skinFaces.dispose()
   if (pendingDraw) cancelAnimationFrame(pendingDraw)
 })
 </script>
-<template><Teleport to="body"><div v-if="cue" class="view-animation" data-testid="viewing-animation" :data-stage="cue.stage" :data-order="cue.order" :data-negated="cue.negated_skip === true" aria-hidden="true"><canvas ref="canvas"></canvas></div></Teleport></template>
+<template>
+  <Teleport to="body">
+    <div v-if="cue" class="view-animation" data-testid="viewing-animation" :data-stage="cue.stage"
+      :data-order="cue.order" :data-negated="cue.negated_skip === true || commander?.stage === 'negated'" aria-hidden="true">
+      <canvas ref="canvas" :data-testid="commander ? 'viewing-commander-effect' : undefined"
+        :data-board="commander?.board" :data-skill-stage="commander?.stage"></canvas>
+    </div>
+  </Teleport>
+</template>

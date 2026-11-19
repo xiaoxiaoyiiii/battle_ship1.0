@@ -996,6 +996,13 @@
 }
 .game.is-placing :deep(.board--self .cell:not(.cell--legal)) { opacity:.38; }
 
+.game.is-commander-targeting :deep(.board--self .cell--legal) {
+  border-color: var(--role-action);
+  background-color: color-mix(in srgb, var(--role-action) 12%, var(--cell-bg));
+}
+.game.is-commander-targeting :deep(.board--self .cell:not(.cell--legal)) { opacity: .4; }
+.game.is-commander-targeting :deep(.board--self .cell--selected::after) { border-color: #f0d58a; }
+
 /* 神秘科技瞄准复用主盘：目标海域只亮服务器给的合法格，其余压暗且不可选（静态，无动效）。 */
 .game.is-mt-targeting[data-mt-board='self'] :deep(.board--self .cell--legal),
 .game.is-mt-targeting[data-mt-board='opponent'] :deep(.board--opponent .cell--legal) {
@@ -2904,6 +2911,39 @@ button.arena-avatar--btn {
   gap: 0;
 }
 
+.hud-chip--commander-attack {
+  animation: commander-attack-ready .78s ease-out both;
+  color: #ffe3d5;
+  border-color: #fd9a79;
+}
+@keyframes commander-attack-ready {
+  0% { box-shadow: 0 0 14px #ff835b, inset 0 0 8px #ff835b6e; }
+  100% { box-shadow: 0 0 2px #ff835b42; }
+}
+.game-hand-count:has(.commander-draw-note) { position: relative; }
+.commander-draw-note {
+  position: absolute;
+  inset: auto 0 calc(100% + 4px) auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid #e1ad5b;
+  background: #33251fee;
+  color: #ffedb7;
+  pointer-events: none;
+  white-space: nowrap;
+  animation: commander-draw-rise .42s ease-out both;
+}
+@keyframes commander-draw-rise {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .commander-draw-note, .hud-chip--commander-attack { animation: none; }
+}
+
 .chain-stack__item {
   width: 104px;
   height: 156px;
@@ -3548,7 +3588,8 @@ button.arena-avatar--btn {
   }
 
   /* 皮肤卡面宿主要保留定位上下文给内部 2:3 卡面，故不跟随 img 的 position:static。 */
-  .game[data-layout='wide'] .chain-stack__item .card-face-art--skin {
+  .game[data-layout='wide'] .chain-stack__item .card-face-art--skin,
+  .game[data-layout='wide'] .chain-stack__item :deep(.commander-skill-card) {
     width: 63px;
     height: 92px;
     flex: 0 0 63px;

@@ -6,11 +6,20 @@ import { resolveCardArtUrl } from '../../cards/skinArt'
 import { CARDS } from '../../cards/cardData'
 import '../game/card-inspect.css'
 import MysteryTechBadges from '../game/MysteryTechBadges.vue'
+import CommanderSkillIcon from '../../components/commander/CommanderSkillIcon.vue'
+import { commanderAvatarUrl } from '../../stores/commanders'
 import { boardCells, sides } from './frame'
-import type { Side, ViewCard, ViewFrame } from './types'
+import { commanderPresentation } from './presentation'
+import type { Json, Side, ViewCard, ViewFrame } from './types'
 
-const props = defineProps<{ frame: ViewFrame; mode: 'replay' | 'spectate'; focus?: Side }>()
+const props = withDefaults(defineProps<{ frame: ViewFrame; mode: 'replay' | 'spectate'; focus?: Side; cue?: Json | null; progress?: number }>(), { cue: null, progress: 0 })
 const cells = computed(() => ({ p1: boardCells(props.frame, 'p1'), p2: boardCells(props.frame, 'p2') }))
+const cast = computed(() => commanderPresentation(props.cue))
+const castStyle = computed(() => cast.value ? {
+  '--view-skill-accent': cast.value.stage === 'negated' || cast.value.failed ? '#fa9199' : cast.value.skill.accent,
+  '--view-skill-opacity': Math.min(1, 0.6 + props.progress * 5, (1 - props.progress) * 6),
+  '--view-skill-offset': `${4 * (1 - Math.min(1, props.progress * 5))}px`,
+} : undefined)
 const selected = ref<ViewCard | null>(null)
 const preview = ref<ViewCard | null>(null), tooltip = ref<HTMLElement | null>(null)
 const previewPosition = ref({ left: '0px', top: '0px', visibility: 'hidden' as 'hidden' | 'visible' })
@@ -47,7 +56,16 @@ async function showPreview(card: ViewCard, event: Event): Promise<void> {
     <div class="view-battle__sea">
       <div v-for="side in sides" :key="side" class="view-battle__half" :data-owner="side" :class="{ 'is-turn': frame.context.state !== 'game_over' && frame.context.current_side === side }">
         <header class="view-player" :data-testid="mode + '-player-' + side">
-          <span class="view-player__flag">{{ side === 'p1' ? 'Ⅰ' : 'Ⅱ' }}</span>
+          <div v-if="frame.commanders?.sides?.[side]?.commander_id || cast?.seat === side" class="view-player__portrait"
+            :class="{ 'is-casting': cast?.seat === side }" :style="cast?.seat === side ? castStyle : undefined">
+            <img :src="commanderAvatarUrl(frame.commanders?.sides?.[side]?.commander_id || cast?.skill.commanderId || '')" alt="" />
+            <div v-if="cast?.seat === side" class="view-player__cast" data-testid="viewing-commander-cue"
+              :data-seat="side" :data-skill="cast.skill.id" :data-skill-stage="cast.stage">
+              <CommanderSkillIcon :skill-id="cast.skill.id" />
+              <span>{{ cast.skill.name }}<small>{{ cast.detail }}</small></span>
+            </div>
+          </div>
+          <span v-else class="view-player__flag">{{ side === 'p1' ? 'Ⅰ' : 'Ⅱ' }}</span>
           <div><strong>{{ frame.players[side].name }}</strong><small v-if="frame.commanders?.sides?.[side]" class="view-cmd-tag" :data-testid="mode + '-commander-' + side">{{ frame.commanders.sides[side].commander_name }} · Lv.{{ frame.commanders.sides[side].commander_level || 1 }}{{ frame.commanders.sides[side].dauntless_active ? ' · 无畏' : '' }}{{ frame.commanders.sides[side].firepower_control_active ? ' · 火力统制' : '' }}</small><small>{{ frame.context.state === 'game_over' ? frame.context.winner === side ? '本局获胜' : '对局结束' : frame.context.current_side === side ? '正在行动' : '舰队待命' }}</small></div>
           <b>{{ frame.players[side].remaining_ships }}<small> 艘</small></b>
         </header>

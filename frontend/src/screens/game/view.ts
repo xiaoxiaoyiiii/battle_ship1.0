@@ -1,6 +1,7 @@
 import type { CellAttack, GameState, ShipSnapshot } from '../../stores/gameStateSchema'
 import { masteryTier } from '../collection/model'
 import { normalizeSkinId } from '../../cards/skinArt'
+import { chainCommanderSkillId } from '../../components/commander/commanderSkillVisuals'
 
 /**
  * Pure view model for the game screen (ticket #27).
@@ -635,17 +636,20 @@ export interface ChainItemView {
   negated: boolean
   negatedBy: string
   preview: PublicChainPreview | null
+  skillId?: string
+  speed?: number
 }
 
 export function chainItems(source: unknown): ChainItemView[] {
   const record = source && typeof source === 'object' ? (source as Record<string, unknown>) : {}
   const list = Array.isArray(record.chain) ? record.chain : []
   return list
-    .map((item) => {
+    .map((item): ChainItemView | null => {
       if (!item || typeof item !== 'object') return null
       const entry = item as Record<string, unknown>
       const card = entry.card && typeof entry.card === 'object' ? (entry.card as Record<string, unknown>) : null
       const name = card ? String(card.name ?? '') : typeof entry.card === 'string' ? entry.card : ''
+      const skillId = chainCommanderSkillId(entry, name)
       const rawPreview = entry.preview && typeof entry.preview === 'object' ? entry.preview as Record<string, unknown> : null
       const rawCells = rawPreview && Array.isArray(rawPreview.cells) ? rawPreview.cells : []
       const previewCells = rawCells
@@ -675,6 +679,8 @@ export function chainItems(source: unknown): ChainItemView[] {
         caster: String(entry.player_id ?? entry.seat ?? ''),
         negated: Boolean(entry.negated),
         negatedBy: entry.negated_by ? String(entry.negated_by) : '',
+        skillId,
+        speed: skillId ? Number(entry.speed ?? card?.speed) || 3 : undefined,
         preview,
       }
     })

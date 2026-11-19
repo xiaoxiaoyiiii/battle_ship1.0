@@ -3,6 +3,7 @@ import { drawCounterEffect } from './cardEffects/canvas'
 import type { ChainStageCard, ChainStagePlan } from './chainStageLayout'
 import { masteryTier } from '../collection/model'
 import type { SkinFaceLookup } from './chainSkinFaces'
+import { commanderSkillVisual } from '../../components/commander/commanderSkillVisuals'
 
 type ArtLookup = (name: string, skinId?: string | null) => HTMLImageElement | null
 const clamp = (n: number): number => Math.max(0, Math.min(1, n))
@@ -32,10 +33,56 @@ function chain(ctx: CanvasRenderingContext2D, x: number, y: number, endX: number
   ctx.restore()
 }
 
+const skillPaths = new Map<string, Path2D>()
+
+function drawCommanderCard(ctx: CanvasRenderingContext2D, item: ChainArtCard, width: number, visual: NonNullable<ReturnType<typeof commanderSkillVisual>>): void {
+  ctx.save()
+  ctx.scale(width / 104, width / 104)
+  const panel = ctx.createRadialGradient(0, 0, 3, 0, 0, 73)
+  panel.addColorStop(0, visual.primary)
+  panel.addColorStop(.29, visual.surface)
+  panel.addColorStop(1, visual.surface)
+  ctx.fillStyle = panel
+  ctx.fillRect(-52, -78, 104, 156)
+  ctx.strokeStyle = visual.primary
+  ctx.lineWidth = 1
+  ctx.strokeRect(-47.5, -73.5, 95, 147)
+  ctx.strokeRect(28.5, -66.5, 14, 15)
+  ctx.fillStyle = visual.accent
+  ctx.textAlign = 'left'
+  ctx.font = 'bold 10px sans-serif'
+  ctx.fillText('指挥官技能', -41, -55)
+  ctx.fillText(String(item.speed ?? 3), 32, -55)
+  ctx.textAlign = 'center'
+  ctx.font = 'bold 15px sans-serif'
+  ctx.fillText(item.name, 0, 60, 89)
+  ctx.translate(-34, -32)
+  ctx.scale(68 / 64, 68 / 64)
+  let path = skillPaths.get(visual.id)
+  if (!path) {
+    path = new Path2D(visual.path)
+    skillPaths.set(visual.id, path)
+  }
+  ctx.strokeStyle = visual.accent
+  ctx.lineWidth = 3.25
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  ctx.stroke(path)
+  ctx.restore()
+}
+
 function card(ctx: CanvasRenderingContext2D, item: ChainArtCard, art: ArtLookup, x: number, y: number, width: number, angle = 0, grey = false, face?: SkinFaceLookup): void {
   const height = width * 1.5
   const radius = Math.max(5, width * 0.05)
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle)
+  const skill = commanderSkillVisual(item.skillId)
+  if (skill) {
+    ctx.beginPath(); ctx.roundRect(-width / 2, -height / 2, width, height, radius); ctx.clip()
+    if (grey || item.negated) ctx.filter = 'grayscale(1) brightness(.7)'
+    drawCommanderCard(ctx, item, width, skill)
+    ctx.restore()
+    return
+  }
   const tier = masteryTier(item.masteryTier)
   if (tier) {
     const colors = ['','#6de0ec','#ba96ff','#f3c467','#9beff7']

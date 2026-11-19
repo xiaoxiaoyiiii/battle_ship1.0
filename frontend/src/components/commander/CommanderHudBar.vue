@@ -9,6 +9,7 @@ import {
 } from '../../stores/commanders'
 import CommanderPortraitStage from './CommanderPortraitStage.vue'
 import CommanderSkillOverlay from './CommanderSkillOverlay.vue'
+import CommanderSkillIcon from './CommanderSkillIcon.vue'
 
 interface SeatCmd {
   player_id: string
@@ -47,7 +48,6 @@ const props = withDefaults(
   defineProps<{
     commanderState: Record<string, unknown> | null
     playerId: string
-    ships: Array<{ positions: Array<{ x: number; y: number }>; alive: boolean }>
     busy: boolean
     compact?: boolean
   }>(),
@@ -57,7 +57,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (event: 'activate', selectedCells?: Array<{ x: number; y: number }>): void
+  (event: 'activate', skillId?: string): void
   (event: 'interact'): void
   (event: 'sendEmoji', text: string): void
 }>()
@@ -65,8 +65,6 @@ const emit = defineEmits<{
 const store = useCommandersStore()
 const detailOpen = ref(false)
 const emojiOpen = ref(false)
-const pickModalOpen = ref(false)
-const selectedShipIdx = ref<number | null>(null)
 
 const enabled = computed(() => Boolean(props.commanderState?.enabled))
 const selfSeat = computed(() => (props.commanderState?.self as SeatCmd | null) ?? null)
@@ -85,12 +83,6 @@ const myLockedIncoming = computed(() =>
 const myOutgoingLocks = computed(() =>
   delayedLocks.value.filter((row) => row.caster_id === props.playerId),
 )
-const livingShips = computed(() =>
-  props.ships
-    .map((ship, idx) => ({ ...ship, idx }))
-    .filter((ship) => ship.alive && ship.positions.length > 0),
-)
-
 const unlockedEmojis = computed(() => {
   const raw = selfSeat.value?.cosmetics?.unlocked_emojis
   return Array.isArray(raw) ? raw.map(String) : []
@@ -146,20 +138,7 @@ function seatStyleVars(seat: SeatCmd | null): Record<string, string> {
 
 function handleSkillClick(): void {
   if (!enabled.value || !canUseSkill.value || props.busy) return
-  if (selfSeat.value?.skill?.id === 'sacrifice_gambit') {
-    selectedShipIdx.value = null
-    pickModalOpen.value = true
-    return
-  }
-  emit('activate')
-}
-
-function confirmGuihangSacrifice(): void {
-  if (selectedShipIdx.value === null) return
-  const target = livingShips.value.find((s) => s.idx === selectedShipIdx.value)
-  if (!target || !target.positions.length) return
-  pickModalOpen.value = false
-  emit('activate', [{ x: target.positions[0].x, y: target.positions[0].y }])
+  emit('activate', selfSeat.value?.skill?.id)
 }
 
 function interact(): void {
@@ -171,12 +150,6 @@ function interact(): void {
 
 function onEscapeKey(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
-  if (pickModalOpen.value) {
-    pickModalOpen.value = false
-    event.preventDefault()
-    event.stopPropagation()
-    return
-  }
   if (emojiOpen.value) {
     emojiOpen.value = false
     event.preventDefault()
@@ -250,6 +223,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
               data-testid="commander-use-skill-btn"
               @click="handleSkillClick"
             >
+              <CommanderSkillIcon v-if="selfSeat.skill" :skill-id="selfSeat.skill.id" class="cmd-skill-button-icon" />
               {{ primaryBtnLabel(selfSeat) }}
             </button>
             <div class="cmd-corner__foot">
@@ -377,6 +351,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
             data-testid="commander-use-skill-btn"
             @click="handleSkillClick"
           >
+            <CommanderSkillIcon v-if="selfSeat.skill" :skill-id="selfSeat.skill.id" class="cmd-skill-button-icon" />
             {{ primaryBtnLabel(selfSeat) }}
           </button>
           <button
@@ -452,41 +427,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
       </button>
     </div>
 
-    <!-- 归航「弃舰筹谋」选船弹窗 -->
-    <div v-if="pickModalOpen" class="cmd-hud__modal-backdrop" @click.self="pickModalOpen = false">
-      <section class="cmd-hud__modal" data-testid="commander-sacrifice-picker" role="dialog" aria-label="弃舰筹谋选择牺牲战舰">
-        <h3>「弃舰筹谋」· 选择 1 艘己方存活战舰牺牲</h3>
-        <p>发动时立即明牌牺牲所选战舰并保留残骸（被无效不退还），结算成功后抽取 2 张魔法卡。</p>
-        <div class="cmd-hud__ship-list">
-          <button
-            v-for="ship in livingShips"
-            :key="ship.idx"
-            type="button"
-            class="cmd-hud__ship-opt"
-            :class="{ 'is-picked': selectedShipIdx === ship.idx }"
-            :data-testid="'commander-sacrifice-ship-' + ship.idx"
-            @click="selectedShipIdx = ship.idx"
-          >
-            <b>战舰 #{{ ship.idx + 1 }}（{{ ship.positions.length }} 格）</b>
-            <small>{{ ship.positions.map((p) => `(${p.x},${p.y})`).join(' · ') }}</small>
-          </button>
-        </div>
-        <div class="cmd-hud__modal-actions">
-          <button
-            type="button"
-            class="button button--primary"
-            :disabled="selectedShipIdx === null"
-            data-testid="commander-sacrifice-confirm"
-            @click="confirmGuihangSacrifice"
-          >确认发动并牺牲</button>
-          <button type="button" class="button button--ghost" @click="pickModalOpen = false">取消</button>
-        </div>
-      </section>
-    </div>
   </section>
 </template>
 
 <style scoped>
+.cmd-skill-button-icon { margin-inline-end: .35em; color: var(--cmd-acc, currentColor); }
 /* 宽屏角落容器：依托父舞台两侧上角留白，绝对不侵入中央棋盘与手牌区域 */
 .cmd-hud--wide {
   position: absolute;
@@ -876,66 +821,4 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscapeKey))
   display: block;
 }
 
-.cmd-hud__modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 360;
-  background: rgb(2 8 20 / 72%);
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  pointer-events: auto;
-}
-.cmd-hud__modal {
-  width: min(460px, 100%);
-  padding: 18px;
-  border-radius: 16px;
-  border: 1px solid #facc15;
-  background: #0d1a2d;
-  color: #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.cmd-hud__modal h3 {
-  margin: 0;
-  font-size: 16px;
-  color: #fef08a;
-}
-.cmd-hud__modal p {
-  margin: 0;
-  font-size: 12px;
-  color: #cbd5e1;
-}
-.cmd-hud__ship-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.cmd-hud__ship-opt {
-  padding: 8px;
-  border-radius: 10px;
-  border: 1px solid rgb(148 163 184 / 28%);
-  background: rgb(14 27 46 / 90%);
-  color: #e2e8f0;
-  text-align: left;
-  cursor: pointer;
-}
-.cmd-hud__ship-opt.is-picked {
-  border-color: #facc15;
-  background: rgb(234 179 84 / 18%);
-}
-.cmd-hud__ship-opt b {
-  display: block;
-  font-size: 12px;
-}
-.cmd-hud__ship-opt small {
-  font-size: 10px;
-  color: #93c5fd;
-}
-.cmd-hud__modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
 </style>

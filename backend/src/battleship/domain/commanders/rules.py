@@ -259,7 +259,7 @@ def commander_room_state(room: Room, viewer_id: str | None) -> dict[str, Any]:
 
 
 def commander_spectate_state(room: Room) -> dict[str, Any]:
-    """观战端 / 回放公开视角（只按 p1/p2 标签导出，绝不泄漏任何延迟锁定目标坐标）。"""
+    """观战和回放按 p1/p2 导出已揭晓的位置，未揭晓的船位仍由船主独享。"""
     order = [str(pid) for pid in room.players]
     seat_map = {pid: f"p{index + 1}" for index, pid in enumerate(order[:2])}
     sides: dict[str, Any] = {}

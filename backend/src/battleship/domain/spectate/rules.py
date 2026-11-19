@@ -28,6 +28,7 @@ from ..skins import card_name_of, public_skin_id
 
 from typing import Any, Iterable
 from .. import mutations
+from ..commanders.catalog import commander_chain_identity
 
 from ...contracts.identity import is_spectate_room, spectate_room_name
 from ..room.models import (
@@ -166,6 +167,17 @@ def _pub_summary_line(data: Any, room: Any = None) -> dict[str, Any] | None:
     return out
 
 
+def _pub_commander_skill(data: Any, room: Any = None) -> dict[str, Any] | None:
+    from ..viewing import commander_skill_feedback
+
+    if not (feedback := commander_skill_feedback(data, room)):
+        return None
+    return {
+        **{key: data[key] for key in ("player_id", "commander_name", "commander_level", "negated") if key in data},
+        **feedback,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Chain previews: "which area did that card target" is public, the raw targets
 # the client submitted are not (their shape is unbounded; it may hold ship ids).
@@ -187,7 +199,8 @@ AREA_TARGET_BOARD_VALUES = BOARD_SIDES + ("choice",)
 PREVIEW_SHAPES = ("area", "line", "cells", "single")
 
 #: Public preview keys (whitelist). Must stay disjoint from both forbidden tables.
-PREVIEW_KEYS = ("id", "card", "seat", "negated", "preview", "mastery_tier", "skin_id")
+PREVIEW_KEYS = ("id", "card", "seat", "negated", "preview", "mastery_tier", "skin_id",
+                "item_kind", "commander_id", "skill_id")
 PREVIEW_FIELDS = ("board", "shape", "cells")
 
 
@@ -348,6 +361,7 @@ def sanitize_preview_item(item: Any, room: Any = None) -> dict[str, Any] | None:
         "seat": seat,
         "negated": bool(item.get("negated")),
         "preview": node,
+        **commander_chain_identity(item.get("item_kind"), item.get("commander_id"), item.get("skill_id")),
         **({'mastery_tier':item['mastery_tier']} if type(item.get('mastery_tier')) is int and 1<=item['mastery_tier']<=4 else {}),
         **({'skin_id': sid} if (sid := public_skin_id(item.get('skin_id'), card_name_of(item) or card_name)) else {}),
     }
@@ -745,7 +759,7 @@ SPECTATE_EVENTS: dict[str, Any] = {
     "rps_result": None,
     "chat_message": None,
     "commander_interact": None,
-    "commander_skill_used": _pub_summary_line,
+    "commander_skill_used": _pub_commander_skill,
     # Public board markers (announced by the card itself to both players).
     "shenwei_hole": None,
     "shenwei_hole_restored": None,

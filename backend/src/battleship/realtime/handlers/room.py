@@ -63,3 +63,24 @@ def register_room_handlers(sio: socketio.AsyncServer, rooms: RoomService,
     async def set_decline_priority(sid: str, data: dict[str, Any] | None = None) -> dict:
         connection = await connection_from_sio(sio, sid)
         return await rooms.set_decline_priority(connection, data)
+
+    @sio.on("custom_rematch_sync")
+    async def custom_rematch_sync(sid: str, data: dict[str, Any] | None = None) -> dict:
+        connection = await connection_from_sio(sio, sid)
+        return await rooms.rematches.sync(connection, data)
+
+    @sio.on("custom_rematch_invite")
+    async def custom_rematch_invite(sid: str, data: dict[str, Any] | None = None) -> dict:
+        connection = await connection_from_sio(sio, sid)
+        result = await rooms.rematches.invite(connection, data)
+        if (result.get('rematch') or {}).get('status') == 'started':
+            await _broadcast_lobby(lobby)
+        return result
+
+    @sio.on("custom_rematch_reply")
+    async def custom_rematch_reply(sid: str, data: dict[str, Any] | None = None) -> dict:
+        connection = await connection_from_sio(sio, sid)
+        result = await rooms.rematches.reply(connection, data)
+        if (result.get('rematch') or {}).get('status') == 'started':
+            await _broadcast_lobby(lobby)
+        return result

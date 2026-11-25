@@ -448,6 +448,7 @@ class BattleService:
         # 投降/掉线也走同一权威同步，让等待当前卡牌交互的连锁及时结束。
         if self.state_sync_hook is not None:
             await self._maybe_await(self.state_sync_hook(room))
+        await self.rooms.rematches.publish_finished(room)
         return result
 
     async def _emit_settlement_events(self, room: Room, result: SettlementResult,

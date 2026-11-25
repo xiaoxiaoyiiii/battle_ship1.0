@@ -3,10 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { createAiRoom, emitFindMatch } from '../../realtime/home'
 import { acquireSettlementChannel, getSettlementSocket } from '../../realtime/settlement'
+import { sendCustomRematchAction } from '../../realtime/customRematch'
 import { useGameStore } from '../../stores/game'
 import { useHomeStore } from '../../stores/home'
 import { usePlacementStore } from '../../stores/placement'
 import { useResultStore } from '../../stores/result'
+import { useCustomRematchStore } from '../../stores/customRematch'
 import { useUiStore } from '../../stores/ui'
 import { useAudioStore } from '../../stores/audio'
 import {
@@ -52,6 +54,7 @@ const placement = usePlacementStore()
 const result = useResultStore()
 const ui = useUiStore()
 const commanders = useCommandersStore()
+const rematch = useCustomRematchStore()
 
 let releaseChannel: (() => void) | null = null
 let barTimer: ReturnType<typeof setTimeout> | null = null
@@ -75,7 +78,7 @@ const friendState = ref<'idle' | 'sending' | 'sent' | 'error'>('idle')
 const friendMessage = ref('')
 
 onMounted(() => {
-  releaseChannel = acquireSettlementChannel()
+  releaseChannel = acquireSettlementChannel(undefined, { keepAlive: true })
   runBars()
 })
 
@@ -89,6 +92,22 @@ onBeforeUnmount(() => {
 const gameOver = computed(() => result.gameOver)
 const challenge = computed(() => gameOver.value?.challenge)
 const hasResult = computed(() => gameOver.value !== null)
+const settledRematch = computed(() => {
+  const state = rematch.state
+  return state && (!game.state.room_id || game.state.room_id === state.room_id) ? state : null
+})
+const rematchHint = computed(() => {
+  const state = settledRematch.value
+  if (!state) return ''
+  if (state.status === 'available') return state.can_invite
+    ? '对方接受后，沿用规则和指挥官直接开局'
+    : state.message || '等待对手恢复连接'
+  if (state.status === 'pending') return state.role === 'sender'
+    ? '等待对方接受再战'
+    : '对手发来了再战邀请'
+  if (state.status === 'started') return '正在进入下一局'
+  return state.message || '本局再战机会已结束'
+})
 const matchId = computed(() => result.gameOverMatchId)
 const outcome = computed<Outcome>(() => outcomeOf(gameOver.value, game.state.player_id))
 const cmdSelf = computed(() => {
@@ -640,7 +659,16 @@ function openReplay(): void {
     </template>
 
     <footer class="game-over__actions">
-      <div v-if="modeKey !== 'custom'" class="game-over__action-block">
+      <div v-if="settledRematch" class="game-over__action-block">
+        <button type="button" class="button button--primary"
+          data-testid="game-over-rematch-invite"
+          :disabled="!settledRematch.can_invite || rematch.submitting || ui.connection !== 'online'"
+          @click="sendCustomRematchAction(getSettlementSocket(), 'invite')">
+          {{ rematch.submitting ? '处理中…' : '邀请再战' }}
+        </button>
+        <small class="game-over__action-hint" data-testid="game-over-rematch-hint" role="status">{{ rematchHint }}</small>
+      </div>
+      <div v-else-if="modeKey !== 'custom'" class="game-over__action-block">
         <button
           type="button"
           class="button"

@@ -1,7 +1,7 @@
 // GENERATED from backend contracts (JSON Schema). Do not edit by hand.
 // Regenerate: python -m battleship.contracts.export_schema --format ts --out frontend/src/socket/events.gen.ts
 export const CONTRACT_SCHEMA_VERSION = 1
-export const CONTRACT_SCHEMA_HASH = 'ba29aeaee65cc33c994806077cc8e0ac98e8565f9f2ebc0d42a45577e75d244f'
+export const CONTRACT_SCHEMA_HASH = 'ae93727c28ff2890cfa51746e232aae95b985e7a2905320825eca809203d7635'
 
 export const INBOUND_EVENTS = [
   'mystery_tech_refresh',
@@ -56,6 +56,9 @@ export const INBOUND_EVENTS = [
   'lobby_create_room',
   'lobby_chat_send',
   'close_room',
+  'custom_rematch_sync',
+  'custom_rematch_invite',
+  'custom_rematch_reply',
   'test_set_ai_rps_choice',
   'test_add_all_magic_cards',
   'test_set_player_ships',
@@ -164,6 +167,8 @@ export const OUTBOUND_EVENTS = [
   'turn_skipped',
   'wangyang_complete',
   'xp_gained',
+  'custom_rematch_state',
+  'custom_rematch_started',
 ] as const
 
 export const DEBUG_EVENTS = [

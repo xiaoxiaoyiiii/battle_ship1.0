@@ -99,6 +99,8 @@ OUTBOUND_EVENTS: tuple[str, ...] = (
     "turn_skipped",
     "wangyang_complete",
     "xp_gained",
+    "custom_rematch_state",
+    "custom_rematch_started",
 )
 
 

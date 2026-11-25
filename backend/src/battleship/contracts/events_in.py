@@ -84,6 +84,9 @@ INBOUND_EVENTS: tuple[str, ...] = (
     "lobby_create_room",
     "lobby_chat_send",
     "close_room",
+    "custom_rematch_sync",
+    "custom_rematch_invite",
+    "custom_rematch_reply",
 ) + DEBUG_EVENTS
 
 

@@ -182,6 +182,8 @@ class RoomService:
         self.bans = CardBanService(self)
         from .viewing import ViewingService
         self.viewing = ViewingService(self)
+        from .custom_rematch import CustomRematchService
+        self.rematches = CustomRematchService(self)
 
     # ------------------------------------------------------------------ wiring
 
@@ -320,7 +322,11 @@ class RoomService:
         """Clear the "in a game" flag for every real account in the room."""
         for player in room.players.values():
             user_id = getattr(player, "user_id", None)
-            if user_id:
+            if user_id and not any(
+                other is not room and other.state != RoomState.GAME_OVER
+                and any(seat.registered and seat.user_id == user_id for seat in other.players.values())
+                for other in self.rooms.values()
+            ):
                 self.presence.set_in_game(user_id, False)
 
     def release_presence(self, room: Room) -> None:
@@ -385,6 +391,7 @@ class RoomService:
             entry.get('sid') == connection.sid
             or (connection.user_id and entry.get('user_id') == connection.user_id)
         )]
+        self.rematches.on_seating(connection)
         return ''
 
     def issue_friend_invite(self, room: Room, user_id: str) -> str:
@@ -533,6 +540,14 @@ class RoomService:
             "message": "人机对战房间创建成功",
         }
 
+    def prepare_full_room(self, room: Room) -> None:
+        """两名玩家已占座，从统一的初始状态开始布船、突变和禁牌。"""
+        room.transition(RoomState.PLACING_SHIPS)
+        for seat_id in room.players:
+            room.init_player_magic(seat_id)
+        mutations.prepare_start(room, self.mutation_rng)
+        self.bans.start(room)
+
     async def join_room(self, connection: Connection, data: dict[str, Any] | None) -> dict:
         data = data if isinstance(data, dict) else {}
         if self._join_limiter.hit("room-join", connection.ip or connection.sid):
@@ -627,11 +642,7 @@ class RoomService:
         if len(room.players) == 2:
             # Skeleton: a full room enters placement. Placement legality / RPS /
             # attack rules belong to ticket #8.
-            room.transition(RoomState.PLACING_SHIPS)
-            for seat_id in room.players:
-                room.init_player_magic(seat_id)
-            mutations.prepare_start(room, self.mutation_rng)
-            self.bans.start(room)
+            self.prepare_full_room(room)
             # 先完成占座和状态转换，再让出事件循环，避免并发最后一座重复开局。
             await self._publisher.enter_room(connection.sid, room.id)
             for seat_id, seat in room.players.items():
@@ -923,6 +934,7 @@ class RoomService:
         # lobby_state built by the disconnect broadcast no longer lists it.
         self.presence.remove_connection(sid)
         self._remove_from_match_queue(sid)
+        self.rematches.on_disconnect(sid)
         for room_id, room in list(self.rooms.items()):
             for player_id, player in list(room.players.items()):
                 if player.socket_id != sid:

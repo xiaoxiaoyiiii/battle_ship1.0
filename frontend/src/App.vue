@@ -15,18 +15,21 @@ import FriendsOverlay from './components/FriendsOverlay.vue'
 import HelpOverlay from './components/HelpOverlay.vue'
 import ScreenBoundary from './components/ScreenBoundary.vue'
 import ToastHost from './components/ToastHost.vue'
+import CustomRematchCard from './components/CustomRematchCard.vue'
 import TideAshBadge from './components/TideAshBadge.vue'
 import GlobalPointerEffects from './components/GlobalPointerEffects.vue'
 import DiceRollOverlay from './screens/game/DiceRollOverlay.vue'
 import MysteryTechOverlay from './screens/game/MysteryTechOverlay.vue'
 import { routeLoading } from './router'
 import { getSettlementSocket } from './realtime/settlement'
+import { isRematchRoute } from './realtime/customRematch'
 import { forgetSeat } from './realtime/reconnect'
 import { useAuthStore } from './stores/auth'
 import { useDmStore } from './stores/dm'
 import { acquireFriendsChannel } from './realtime/friends'
 import { useCollectionStore } from './stores/collection'
 import { useGameStore } from './stores/game'
+import { useCustomRematchStore } from './stores/customRematch'
 import { isInitialBanPlacement } from './stores/cardBans'
 import { useUiStore } from './stores/ui'
 import { useAudioStore } from './stores/audio'
@@ -57,6 +60,7 @@ watch(() => collection.isOpen, open => {
 })
 watch(() => auth.user?.id ?? '', () => collection.reset())
 const ui = useUiStore()
+const rematch = useCustomRematchStore()
 let exitDestination = '/lobby'
 const removeBanLeaveGuard = router.beforeEach(to => {
   if (isInitialBanPlacement(game.state) && !['placement', 'settings'].includes(String(to.name))) {
@@ -682,6 +686,7 @@ onBeforeUnmount(() => {
   </AppOverlay>
 
   <ToastHost />
+  <CustomRematchCard v-if="isRematchRoute(route.name) && rematch.state?.status === 'pending'" />
   <MysteryTechOverlay />
   <DiceRollOverlay
     :self-id="game.state.player_id"

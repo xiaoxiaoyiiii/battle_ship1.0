@@ -29,6 +29,7 @@ export interface StoredSeat {
 
 let stored: StoredSeat | null = null
 let restoreBusy = false
+let completedRoomId = ''
 
 function storage(): Storage | null {
   try {
@@ -69,10 +70,15 @@ function ackToken(ack: unknown): string {
 
 /** Ask this (seat-bound) connection for a reconnect token and keep it. */
 async function captureToken(socket: TypedSocket, roomId: string, playerId: string): Promise<boolean> {
+  if (roomId === completedRoomId) return false
+  const original = load()
   try {
     const ack = await socket.emitEvent('get_reconnect_token', { room_id: roomId, player_id: playerId })
     const token = ackToken(ack)
     if (ack && ack.status === 'success' && token) {
+      // 新局已写入权威座位，或者旧局座位已清理时，忽略旧请求的迟到回执。
+      if (roomId === completedRoomId) return false
+      if (stored !== original && (stored?.roomId !== roomId || stored?.playerId !== playerId)) return false
       save({ roomId, playerId, token })
       return true
     }
@@ -141,4 +147,17 @@ export async function restoreSeat(socket: TypedSocket | null, pinia?: Pinia): Pr
 /** Test/route helper: forget the stored seat (leaving a match on purpose). */
 export function forgetSeat(): void {
   save(null)
+}
+
+export function readRememberedSeat(): StoredSeat | null {
+  return load()
+}
+
+export function forgetSeatForRoom(roomId: string): void {
+  completedRoomId = roomId
+  if (load()?.roomId === roomId) forgetSeat()
+}
+
+export function adoptRememberedSeat(seat: StoredSeat): void {
+  save(seat)
 }

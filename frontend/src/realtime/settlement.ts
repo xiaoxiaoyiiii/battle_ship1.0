@@ -2,7 +2,7 @@ import type { Pinia } from 'pinia'
 import { createTypedSocket, type TypedSocket } from '../socket/client'
 import { useGameStore } from '../stores/game'
 import { useUiStore } from '../stores/ui'
-import { forgetSeat, rememberSeat, restoreSeat } from './reconnect'
+import { forgetSeat, readRememberedSeat, rememberSeat, restoreSeat } from './reconnect'
 import { useResultStore } from '../stores/result'
 import { useMatchStore } from '../stores/match'
 import { useCardDrawStore } from '../stores/cardDraw'
@@ -12,6 +12,8 @@ import { useLobbyStore } from '../stores/lobby'
 import { useHomeStore } from '../stores/home'
 import { useCommandersStore } from '../stores/commanders'
 import { applyMysteryTechEvent, hydrateMysteryTechFromSync, type MysteryTechEventName } from './mysteryTech'
+import { applyCustomRematchStarted, applyCustomRematchState, isRematchRoute, syncCustomRematch } from './customRematch'
+import { useCustomRematchStore } from '../stores/customRematch'
 import router from '../router'
 
 /**
@@ -43,6 +45,8 @@ export type SettlementEventName =
   | 'commander_state_updated'
   | 'commander_skill_used'
   | 'commander_xp_settled'
+  | 'custom_rematch_state'
+  | 'custom_rematch_started'
 
 // Typed listeners: only the frames that exist in the generated outbound union.
 // recent_opponent is absent there (see the raw listener below).
@@ -65,6 +69,8 @@ const SETTLEMENT_EVENTS = [
   'commander_state_updated',
   'commander_skill_used',
   'commander_xp_settled',
+  'custom_rematch_state',
+  'custom_rematch_started',
 ] as const
 
 // 取消与重新配对可能在大厅挂载前连续抵达，由持久连接接住这次交接。
@@ -249,6 +255,12 @@ export function applySettlementEvent(
     case 'commander_xp_settled':
       useCommandersStore(pinia).recordXpSettled(payload)
       break
+    case 'custom_rematch_state':
+      applyCustomRematchState(payload, pinia)
+      break
+    case 'custom_rematch_started':
+      applyCustomRematchStarted(payload, pinia)
+      break
   }
 }
 
@@ -316,9 +328,19 @@ export function acquireSettlementChannel(
     const ui = useUiStore(pinia)
     const onConnect = (): void => {
       ui.setConnection(true)
-      // Ticket #53: a reconnect gives a new socket id; rebind the seat with the
-      // frozen get_reconnect_token / rejoin_room pair before anything else.
-      void restoreSeat(socket, pinia)
+      const routeName = router.currentRoute.value.name
+      const oldSeat = readRememberedSeat()
+      const rematch = useCustomRematchStore(pinia).credential
+      // 结算过的座位有独立恢复协议，不向旧房发出无效的普通重连。
+      if (routeName === 'game-over' || (isRematchRoute(routeName) && rematch
+        && (!oldSeat || oldSeat.roomId === rematch.room_id))) {
+        void syncCustomRematch(socket, pinia).then(restored => {
+          if (!restored && socket.socket.connected) void restoreSeat(socket, pinia)
+        })
+      } else {
+        void restoreSeat(socket, pinia)
+        void syncCustomRematch(socket, pinia)
+      }
     }
     const onDisconnect = (): void => ui.setConnection(false)
     socket.socket.on('connect', onConnect)

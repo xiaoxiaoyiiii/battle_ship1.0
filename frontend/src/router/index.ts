@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { INVITE_PARAM, INVITE_TOKEN_PARAM, readInviteRoomId, readInviteToken } from '../screens/lobby/inviteLink'
 import { hasReconnectSeat, shouldRedirectLobbyToStart } from '../splash/splashPolicy'
+import { hasCustomRematchResume } from '../stores/customRematch'
 
 /**
  * The eleven screens of ticket #21. Names are frozen: they are the route
@@ -76,7 +77,7 @@ router.beforeEach((to) => {
   if (shouldRedirectLobbyToStart({
     routeName: typeof to.name === 'string' ? to.name : null,
     hasInvite: Boolean(readInviteRoomId(to.query)),
-    hasSeat: hasReconnectSeat(splashSessionStorage()),
+    hasSeat: hasReconnectSeat(splashSessionStorage()) || hasCustomRematchResume(),
     isInitialNavigation,
   })) {
     return { name: 'start', replace: true }

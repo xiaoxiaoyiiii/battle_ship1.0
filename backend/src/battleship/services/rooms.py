@@ -697,14 +697,13 @@ class RoomService:
         """
         data = data if isinstance(data, dict) else {}
         room_id = str(data.get("room_id") or "")
-        player_id = connection.user_id or connection.sid
         room = self.get_room(room_id) if room_id else None
         if room is None:
             return {"status": "error", "message": "房间不存在"}
         if room.state != RoomState.WAITING:
             return {"status": "error", "message": "对局已开始，不能解散"}
         entries = list(room.players.items())
-        if len(entries) != 1 or entries[0][0] != player_id:
+        if len(entries) != 1 or not self.owns_seat(connection, entries[0][1]):
             return {"status": "error", "message": "只能解散自己创建的房间"}
         # _drop_room releases the "in a game" flag: the player is still
         # connected, so without it the friend guard would block invites forever.

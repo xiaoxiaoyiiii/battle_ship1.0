@@ -430,8 +430,10 @@ def build_room_sync(
         "effect_flags": {name: value for name, value in vars(player.effect_flags).items() if value},
         "pending_sacrifice": _my_pending_sacrifice_payload(room, player_id),
         "pending_sacrifice_ships": _my_pending_sacrifice_ships(room, player_id),
+        # 猜拳结算前，对手只能看到是否已提交，不能看到选了什么。
         "rps_choices": (
-            dict(room.rps_choices) if room.state == RoomState.ROCK_PAPER_SCISSORS else {}
+            {pid: choice if pid == player_id else "submitted" for pid, choice in room.rps_choices.items()}
+            if room.state == RoomState.ROCK_PAPER_SCISSORS else {}
         ),
         # Ticket #43 additive tail: the countdown truth and the waiting-seat
         # visibility, both derived from state the snapshot already reads.

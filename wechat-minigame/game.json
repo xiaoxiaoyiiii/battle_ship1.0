@@ -1,0 +1,7 @@
+{
+  "deviceOrientation": "portrait",
+  "showStatusBar": false,
+  "networkTimeout": {
+    "connectSocket": 10000
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "battleship-wechat-minigame",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.cjs"
+  },
+  "dependencies": {
+    "engine.io-client": "6.6.8",
+    "socket.io-client": "4.8.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.21.5"
+  }
+}
